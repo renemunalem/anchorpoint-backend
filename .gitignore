@@ -1,0 +1,44 @@
+node_modules
+dist
+.env
+.env.*
+build
+coverage
+*.log
+*.dump
+*.sql.gz
+*.sql.zip
+*.bak
+*.pem
+*.key
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+secrets/
+.DS_Store
+
+# dev runtime store / generated data
+data/atlasai-dev.json
+data/*.json
+
+# local db scratch files
+db/**/*.dump
+db/**/*.sql.gz
+db/**/*.sql.zip
+db/**/*.bak
+
+# local env
+.env
+
+# external source exports / local import staging
+# includes dated export folders, binary payloads, and any zip bundles
+/imports/
+/imports/**/*.zip
+
+# test artifacts
+test-results/
+playwright-report/
+
+# local agent/dev artifacts
+.claude/

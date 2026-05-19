@@ -1,0 +1,127 @@
+CREATE TABLE IF NOT EXISTS users (
+  id VARCHAR(64) PRIMARY KEY,
+  first_name VARCHAR(255) NOT NULL,
+  last_name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  role VARCHAR(32) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  last_login VARCHAR(64) NULL,
+  source_trace JSON NULL
+);
+
+CREATE TABLE IF NOT EXISTS members (
+  id VARCHAR(64) PRIMARY KEY,
+  subscriber_member_id VARCHAR(64) NOT NULL,
+  first_name VARCHAR(255) NULL,
+  last_name VARCHAR(255) NULL,
+  birthdate VARCHAR(32) NULL,
+  ssn VARCHAR(32) NULL,
+  phone_number VARCHAR(64) NULL,
+  email VARCHAR(255) NULL,
+  address_line1 VARCHAR(255) NULL,
+  city VARCHAR(128) NULL,
+  state VARCHAR(64) NULL,
+  zip_code VARCHAR(32) NULL,
+  account_group_name VARCHAR(255) NOT NULL,
+  group_number VARCHAR(64) NOT NULL,
+  plan_name VARCHAR(255) NULL,
+  plan_id VARCHAR(64) NULL,
+  cobra TINYINT(1) NULL,
+  coverage_effective_date VARCHAR(32) NULL,
+  coverage_term_date VARCHAR(32) NULL,
+  coverage_tier VARCHAR(64) NOT NULL,
+  relationship_type VARCHAR(64) NOT NULL,
+  member_status VARCHAR(32) NOT NULL,
+  cob_status VARCHAR(32) NOT NULL,
+  cob_coverage_types TEXT NULL,
+  cob_details TEXT NULL,
+  cob_reported_at VARCHAR(64) NULL,
+  nifty_member_id VARCHAR(64) NULL,
+  glip_channel_id VARCHAR(128) NULL,
+  network VARCHAR(64) NULL,
+  source_trace JSON NULL
+);
+
+CREATE TABLE IF NOT EXISTS cases (
+  id VARCHAR(64) PRIMARY KEY,
+  case_number VARCHAR(64) NOT NULL UNIQUE,
+  member_id VARCHAR(64) NOT NULL,
+  member_name VARCHAR(255) NOT NULL,
+  case_type VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  action_item TEXT NULL,
+  urgency_label VARCHAR(64) NOT NULL,
+  urgency_tone VARCHAR(32) NOT NULL,
+  created_at VARCHAR(64) NOT NULL,
+  updated_at VARCHAR(64) NOT NULL,
+  agent VARCHAR(255) NOT NULL,
+  group_number VARCHAR(64) NOT NULL,
+  claim_number VARCHAR(64) NULL,
+  priority VARCHAR(32) NOT NULL,
+  description TEXT NULL,
+  closed_at VARCHAR(64) NULL,
+  fcr VARCHAR(64) NULL,
+  first_call_resolution TINYINT(1) NULL,
+  resolution VARCHAR(255) NULL,
+  resolution_details TEXT NULL,
+  origin VARCHAR(32) NOT NULL DEFAULT 'phone',
+  due_at VARCHAR(64) NULL,
+  source_trace JSON NULL,
+  CONSTRAINT fk_cases_member FOREIGN KEY (member_id) REFERENCES members(id)
+);
+
+CREATE TABLE IF NOT EXISTS case_timeline (
+  id VARCHAR(128) PRIMARY KEY,
+  case_id VARCHAR(64) NOT NULL,
+  type VARCHAR(32) NOT NULL,
+  author VARCHAR(255) NOT NULL,
+  timestamp VARCHAR(64) NOT NULL,
+  text MEDIUMTEXT NULL,
+  to_status VARCHAR(32) NULL,
+  subject VARCHAR(255) NULL,
+  sender_from VARCHAR(255) NULL,
+  recipient_to VARCHAR(255) NULL,
+  recipient_cc VARCHAR(255) NULL,
+  recipient_bcc VARCHAR(255) NULL,
+  source_trace JSON NULL,
+  CONSTRAINT fk_case_timeline_case FOREIGN KEY (case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS case_attachments (
+  id VARCHAR(128) PRIMARY KEY,
+  case_id VARCHAR(64) NOT NULL,
+  kind VARCHAR(64) NOT NULL,
+  link_kind VARCHAR(32) NOT NULL,
+  name VARCHAR(512) NOT NULL,
+  title VARCHAR(512) NULL,
+  description TEXT NULL,
+  mime_type VARCHAR(255) NULL,
+  file_type VARCHAR(64) NULL,
+  size_bytes BIGINT NULL,
+  is_private TINYINT(1) NULL,
+  created_at VARCHAR(64) NULL,
+  owner VARCHAR(255) NULL,
+  export_relative_path VARCHAR(1024) NULL,
+  source_trace JSON NOT NULL,
+  CONSTRAINT fk_case_attachments_case FOREIGN KEY (case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS rbac_permissions (
+  id VARCHAR(64) PRIMARY KEY,
+  role VARCHAR(64) NOT NULL UNIQUE,
+  permissions TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS call_sessions (
+  id VARCHAR(64) PRIMARY KEY,
+  agent_id VARCHAR(64) NOT NULL,
+  caller_phone VARCHAR(64) NULL,
+  member_id VARCHAR(64) NULL,
+  status VARCHAR(32) NOT NULL,
+  started_at VARCHAR(64) NOT NULL,
+  ended_at VARCHAR(64) NULL,
+  locked_at VARCHAR(64) NULL,
+  verified_member_ids JSON NOT NULL,
+  INDEX idx_call_sessions_agent_started (agent_id, started_at)
+);

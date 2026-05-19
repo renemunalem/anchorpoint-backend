@@ -1,0 +1,241 @@
+# Claude Frontend Queue (AtlasAI)
+
+Rules:
+- Claude picks ONLY the first unchecked task.
+- Claude completes ONLY one task per run.
+- Claude works ONLY in /Users/rene/ai-dev-workspace/atlasai
+- Claude must not edit backend repo files.
+
+---
+
+## Queue
+
+- [ ] Fix compose mutation regression in `authenticatedFetch` header merging
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Fix the frontend regression that duplicates `Content-Type` in `authenticatedFetch`, causing compose-driven `POST` and `PATCH` mutations to fail against the real backend.
+    - Restore successful TimelineCompose mutations without changing backend contracts.
+  - Acceptance criteria:
+    - `src/helpers/authInterceptor.ts` merges headers case-insensitively and does not produce `Content-Type: application/json, application/json`.
+    - TimelineCompose mutations succeed from the UI against the real backend:
+      - log call
+      - create task
+      - patch status
+      - patch agent
+      - close case with notes
+    - Existing authenticated GET requests continue to work.
+    - `npm run build` passes.
+  - Notes:
+    - Evidence: `docs/qa-analysis/2026-04-26_timeline_compose_parity_retest.md`
+    - QA verified backend parity is already good; this is a frontend-only regression.
+    - Suspected file: `src/helpers/authInterceptor.ts`
+    - Keep scope to the header merge fix only; do not redesign TimelineCompose in this task.
+  - Output:
+    - Files changed + brief root cause summary + manual verification steps + commit hash.
+
+- [ ] Case Detail — fold HIPAA warning card into sticky identity strip
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Remove the redundant standalone `HIPAA not verified` warning card on Case Detail.
+    - Keep the warning message and actions, but render them inside the sticky identity strip as a compact inline warning state.
+  - Acceptance criteria:
+    - `/cases/500Hu00002Qox7zIAB` no longer shows a separate warning card duplicating `Verify HIPAA` / `Member Console`.
+    - The sticky identity strip contains the warning text plus the existing HIPAA and member actions.
+    - Current behavior is preserved:
+      - HIPAA modal still opens
+      - email unlock behavior is unchanged
+      - timeline and attachments rendering/download UI are unchanged
+    - `npm run build` passes after the UI cleanup.
+  - Notes:
+    - Evidence: `docs/agent-queues/QUEUE_INBOX.md`
+    - Keep this Phase A-safe: layout/IA cleanup only, no new state logic.
+  - Output:
+    - Files changed + brief UI summary + manual verification on `/cases/500Hu00002Qox7zIAB`.
+
+- [x] ✅ Merge Case Detail Phase A branch to main
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Merge `feat/case-detail-phase-a` into `main` and push.
+    - Verify build is clean post-merge and the Phase A layout renders on main.
+  - Acceptance criteria:
+    - `feat/case-detail-phase-a` is merged to `main` with no conflicts.
+    - `npm run build` passes clean after merge.
+    - `/cases/500Hu00002Qox7zIAB` shows the Phase A layout (compact breadcrumb, identity strip, key-facts strip) on main.
+  - Notes:
+    - Phase A verified PASS by Gemini: `docs/qa-analysis/2026-04-25_case_detail_redesign_phaseA_retest.md`
+    - Branch head: commit `a03485e`
+    - Keep merge reversible (no-ff preferred for audit trail).
+  - Output:
+    - Merge commit hash + `npm run build` result + one-line verification on the case URL.
+    - Merge commit: a0d31d0 (your push moved main to this)
+    - * npm run build ✅
+    - * Verified: /cases/500Hu00002Qox7zIAB shows Phase A layout on main
+  - Completion:
+    - Queue checkbox corrected after stale state was noticed; frontend merge already landed in commit `a0d31d0`.
+
+- [x] ✅ Case Detail Phase B — Timeline item card refinement
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Enhance the Timeline section with richer per-item card display as described in the Gemini Phase A retest next-best-dev-prompt.
+    - Reference visual target: `docs/atlasai_shell_v1.html`.
+  - Acceptance criteria:
+    - Timeline rows display richer detail: event-type icon, event label, subject line (where available), author, and right-aligned timestamp.
+    - Timeline text previews are clamped (already done in Phase A polish — verify not regressed).
+    - All existing filter tabs (All / Emails / Calls / Notes / Status Changes) remain functional.
+    - No new backend endpoints introduced.
+    - Build passes clean after changes.
+  - Notes:
+    - Source prompt: `docs/qa-analysis/2026-04-25_case_detail_redesign_phaseA_retest.md` (next-best-dev-prompt section)
+    - Visual reference: `docs/atlasai_shell_v1.html`
+    - Quick Filters (All/Emails/Calls/Notes/Status Changes) are already implemented in Phase A — do not re-implement.
+    - Do NOT implement Phase B non-goals: floating sticky bar, quick-reply composer, document tabbing, dark mode tokens.
+  - Output:
+    - Files changed + brief description of timeline card changes + manual test at `/cases/500Hu00002Qox7zIAB`.
+    - File changed: `src/pages/Cases/AtlasCaseDetailPage.tsx`
+    - Changes: Added `TL_ICON_BG` color map + `TL_TYPE_LABEL` map; replaced flat timeline rows with icon-pill cards (rounded-lg, event-type bg color); line 1 = bold author + · type label + right timestamp; line 2 = subject (emails, line-clamp-1) + body preview (line-clamp-2); status badge for status/close events; count chips on all filter tabs.
+    - Commit: 651bb23 · `npm run build` ✅ · pushed to main
+
+- [x] ✅ Redesign Case Detail Phase A (layout + IA only, preserve all behavior)
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Implement the Phase A Case Detail redesign described in `docs/qa-analysis/2026-04-25_case_detail_redesign_phase_a.md`.
+    - Limit scope to layout and information architecture only while preserving all current behavior:
+      - HIPAA modal flow
+      - email unlock/gating
+      - timeline behavior
+      - attachments rendering
+      - attachment download button wiring
+  - Acceptance criteria:
+    - Layout follows the Phase A IA:
+      - compact page head
+      - identity strip
+      - key-facts strip
+      - two-column work area
+    - Existing workflows still function:
+      - HIPAA verify still unlocks email
+      - timeline remains intact
+      - attachments metadata remains visible
+      - download button remains present and wired
+    - No new backend endpoints are introduced for this phase.
+    - Responsive behavior holds: the right rail collapses below the main column on smaller widths without breaking content.
+    - Manual verification uses Salesforce-imported cases from the design doc:
+      - `500Hu00002Qox7zIAB`
+      - `500Hu00002QF3ExIAL`
+      - `500Hu00002RUXy5IAH`
+  - Notes:
+    - Evidence/design brief: `docs/qa-analysis/2026-04-25_case_detail_redesign_phase_a.md`
+    - Keep the implementation reversible and avoid new state machines in Phase A.
+    - If the redesign appears to require new API data, stop and flag it instead of inventing values.
+  - Output:
+    - Files changed + screenshot/description of the new IA + quick manual verification steps with the listed case IDs.
+  - Completion: Implemented on `feat/case-detail-phase-a` (commits `1cde5a5`, `a03485e`). Verified PASS by Gemini retest `2026-04-25_case_detail_redesign_phaseA_retest.md`.
+
+- [x] ✅ Review and merge Salesforce attachments UI branch to frontend main
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Review the attachment rendering work on branch `claude/render-salesforce-attachments-ui`.
+    - Merge it to `main` so the frontend download follow-up does not stack on a stale branch.
+  - Acceptance criteria:
+    - The branch is compared against `main` and kept scoped to the attachment rendering UI only.
+    - Attachment rendering still matches the PASS report in `docs/qa-analysis/2026-04-25_salesforce_attachments_render_retest.md`.
+    - The branch is merged to `main` and pushed.
+  - Notes:
+    - Backend attachment metadata is already live; this is release/branch hygiene, not a new UI feature.
+    - Keep the merge review small and reversible.
+  - Output:
+    - Merge result + commit hash + quick verification steps.
+
+- [x] ✅ Render imported Salesforce attachments on Case Detail
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Render the backend-provided `attachments` array on the Case Detail page for Salesforce-imported cases.
+    - Show attachment name/title plus enough metadata to distinguish direct case links vs related-record links where helpful.
+  - Acceptance criteria:
+    - On `/cases/:id`, cases with imported attachments show a visible attachments/documents section.
+    - Mixed attachment types render correctly:
+      - modern `content-version`
+      - legacy `legacy-attachment`
+    - Mixed link origins render without losing context:
+      - `case-direct`
+      - `related-record`
+    - The UI uses `exportRelativePath` and existing metadata contract fields only; no frontend file-serving workaround is introduced.
+  - Notes:
+    - Source report: `docs/qa-analysis/2026-04-25_salesforce_timeline_and_attachments_validation.md`
+    - Backend API already returns populated attachment metadata; this is a UI rendering gap, not a backend contract issue.
+    - Example verification case IDs:
+      - `500Hu00002QF3ExIAL`
+      - `500Hu00002Qox7zIAB`
+      - `500Hu00002RUXy5IAH`
+  - Output:
+    - Files changed + screenshots/description of rendered attachments + quick manual verification steps.
+
+- [x] ✅ Fix Case Detail HIPAA modal identifier gating (`selected` vs `verified`)
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Fix the Case Detail HIPAA modal so checking the required identifiers advances the verification state and enables `Authorize & Access` when the intended threshold is met.
+  - Acceptance criteria:
+    - On `/cases/:id`, selecting `Member` enables identifier selection.
+    - Checking 3 required identifiers results in the UI reaching an actionable verified state instead of `3/3 selected · 0/3 verified`.
+    - `Authorize & Access` becomes enabled once the intended identifier requirement is satisfied.
+    - Completing verification unlocks the Email action on the same case.
+  - Notes:
+    - Source report: `docs/qa-analysis/2026-04-25_atlasai_retest_hipaa_case_detail.md`
+    - Suspected fix area is frontend state/handler wiring in the Case Detail HIPAA modal, not backend API behavior.
+    - Keep the fix small and reversible; do not redesign the entire modal flow.
+  - Output:
+    - Files changed + exact repro path used + quick manual verification steps.
+
+- [x] ✅ (Seed) Align Case Detail route to the intended “real” page (not a stub)
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Ensure /cases/:id renders the correct Case Detail implementation (the parity-focused one), not a minimal placeholder page.
+    - Ensure worklist “Open” and row-click navigation consistently lands on the same Case Detail page.
+  - Acceptance criteria:
+    - From Worklist → Open Case → shows full Case Detail UI (not skeleton-only).
+    - No console errors on load.
+    - Back-to-worklist navigation works.
+  - Notes:
+    - Use docs/atlasai_shell_v1.html as UI reference only.
+    - Don’t break existing Worklist and Members routes.
+  - Output:
+    - List files changed + quick manual test steps.
+
+- [x] ✅ (Seed) Case Detail HIPAA verification modal: make it modern/minimalist
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Keep “Verify HIPAA” on Case Detail as a modal (per Rene request).
+    - Update styling to modern minimalist (remove heavy blue bordered callouts like `rounded-lg border border-blue-200 bg-blue-50` if present).
+  - Acceptance criteria:
+    - Modal looks clean and minimal.
+    - Still functional (can complete HIPAA verification flow).
+    - Email button unlocks after verification.
+  - Output:
+    - Screenshot description + style changes summary.
+
+- [x] ✅ Validate and fix HIPAA verification gating on Case Detail
+  - Owner: Claude
+  - Repo: atlasai (frontend)
+  - Goal:
+    - Reproduce Gemini's 2026-04-25 smoke finding on the Case Detail HIPAA flow.
+    - Fix the gating logic so agents can complete verification and unlock PHI actions when the intended identifier requirements are satisfied.
+  - Acceptance criteria:
+    - On `/cases/:id`, an agent can select caller type, satisfy the required identifier checks, and enable `Authorize & Access`.
+    - Completing HIPAA verification unlocks the Email action on the same case.
+    - If the UI requires both "selected" and "verified" states, that interaction must be explicit and understandable.
+  - Notes:
+    - Source report: `docs/qa-analysis/2026-04-25_atlasai_smoke_report.md`
+    - The QA report is newer than the earlier completion note, so treat this as a regression or a repro gap until proven otherwise.
+    - Backend recommendation only: no backend contract change is identified yet.
+    - Queue note: a narrower, retest-driven top-priority fix task now exists above and should be executed first.
+  - Output:
+    - Files changed + exact repro path used + quick manual verification steps.

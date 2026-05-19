@@ -1,0 +1,545 @@
+# Codex Backend Queue (AtlasAI)
+
+Rules:
+- Codex picks ONLY the first unchecked task.
+- Codex completes ONLY one task per run.
+- Codex works ONLY in /Users/rene/ai-dev-workspace/atlasai-backend
+- Codex is queue authority and updates queue files.
+- Docker-only dev. REPO_DRIVER=json for now.
+
+---
+
+## Queue
+
+- [x] Admin users list API parity — add protected `GET /v1/users`
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Unblock AtlasAI admin and real agent-list loading by exposing a protected users list endpoint from the backend.
+    - Support the existing frontend calls to `GET /v1/users` and `GET /v1/users?role=agent`.
+  - Acceptance criteria:
+    - `GET /v1/users` exists and is protected by `requireSession`.
+    - `GET /v1/users?role=agent` returns only agent users.
+    - Response excludes passwords.
+    - JSON and mysql repos both support listing users.
+    - `npx tsc --noEmit` passes.
+  - Notes:
+    - Evidence: Gemini QA report on `/admin` 404ing due to missing backend users API.
+    - Keep scope to list parity only; do not implement full user CRUD in this task.
+  - Output:
+    - Files changed + curl verification + commit hash.
+
+- [x] Atlas Case Detail compose backend parity — calls/tasks routes + PATCH compatibility
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Match the real backend to the current Atlas Case Detail compose hooks without requiring frontend route changes.
+    - Add the missing case activity routes and compatibility patch path used by the frontend.
+  - Acceptance criteria:
+    - `POST /v1/cases/:id/calls` exists and appends a `call` timeline entry.
+    - `POST /v1/cases/:id/tasks` exists and appends a `task` timeline entry.
+    - `PATCH /v1/cases/:id` accepts `{ status }` and updates case status compatibly with the existing `/:id/status` route.
+    - `PATCH /v1/cases/:id` accepts `{ agent }` and updates assignment compatibly with the existing `/:id/assign` route.
+    - Existing routes remain supported.
+    - JSON and mysql repos both support the new call/task actions.
+    - `close` accepts frontend `notes` as an alias for backend `resolutionDetails`.
+    - `npx tsc --noEmit` passes.
+  - Notes:
+    - Evidence: `TimelineCompose` handoff dated 2026-04-26.
+    - Frontend hook paths:
+      - `POST /v1/cases/:id/calls`
+      - `POST /v1/cases/:id/tasks`
+      - `PATCH /v1/cases/:id` with `{ status }`
+      - `PATCH /v1/cases/:id` with `{ agent }`
+    - Completed 2026-04-26:
+      - Added route parity without changing frontend code.
+      - Added backend `task` timeline type support.
+  - Output:
+    - Files changed + curl verification + commit hash.
+
+- [x] MySQL Phase E4 — Add GET /v1/cases/stats (status count aggregates)                                                                                                                                                                       
+    - Owner: Codex                                                                                                                                                                                                                               
+    - Repo: atlasai-backend                                                                                                                                                                                                                      
+    - Goal:                                                                                                                                                                                                                                      
+      - Add a single read-only endpoint that returns per-status case counts for the                                                                                                                                                              
+        authenticated user's accessible scope.                                     
+      - The frontend Worklist page has an "Active Cases" distribution component that                                                                                                                                                             
+        currently derives counts by filtering the paginated cases list client-side.                                                                                                                                                              
+        In MySQL mode that list is page 1 only, so the counts are wrong. This endpoint                                                                                                                                                           
+        fixes that by returning server-side aggregates across the full dataset.                                                                                                                                                                  
+    - Acceptance criteria:                                                                                                                                                                                                                       
+      - `GET /v1/cases/stats` exists and is auth-protected (same session guard as                                                                                                                                                                
+        `GET /v1/cases`).                                                                                                                                                                                                                        
+      - Response shape (both modes):                                                                                                                                                                                                             
+        ```json                                                                                                                                                                                                                                  
+        {                                                                                                                                                                                                                                        
+          "open":      <number>,                                                                                                                                                                                                                 
+          "waiting":   <number>,                                                                                                                                                                                                                 
+          "escalated": <number>,
+          "closed":    <number>                                                                                                                                                                                                                  
+        }                                                   
+        ```
+      - JSON mode: counts are derived from the same in-memory/JSON data source that
+        `GET /v1/cases` uses — just COUNT per status, no pagination.               
+      - MySQL mode: counts come from efficient `SELECT status, COUNT(*) … GROUP BY status`                                                                                                                                                       
+        — no full table scan of rows, no PHI in the response.                                                                                                                                                                                    
+      - Response contains no PHI — only integer counts.                                                                                                                                                                                          
+      - `npx tsc --noEmit` passes.                                                                                                                                                                                                               
+      - Existing routes (`GET /v1/cases`, `GET /v1/cases/:id`) are unaffected.                                                                                                                                                                   
+    - Notes:                                                                                                                                                                                                                                     
+    - Keep scope strictly to this one endpoint. No filtering by agent/priority/type                                                                                                                                                            
+        in this task — the frontend will handle that client-side for now.            
+      - Route must not conflict with `GET /v1/cases/:id` — register `/stats` before                                                                                                                                                              
+        the `/:id` wildcard or use a distinct express path.                                                                                                                                                                                      
+      - JSON mode may simply iterate the in-memory list and count; O(n) is fine for                                                                                                                                                              
+        the fake dataset size.                                                                                                                                                                                                                   
+      - Completed 2026-04-26:
+        - Added auth-protected `GET /v1/cases/stats` in both drivers.
+        - JSON mode counts via in-memory iteration; mysql mode counts via `GROUP BY status`.
+        - Route registered before `/:id` to avoid wildcard conflicts.
+    - Output:                                                                                                                                                                                                                                    
+      - Files changed                                                                                                                                                                                                                            
+      - `curl` proof for both modes:                                                                                                                                                                                                             
+        - JSON mode: `curl -b cookies.txt http://localhost:3000/v1/cases/stats`
+        - MySQL mode: same command with `REPO_DRIVER=mysql` backend running                                                                                                                                                                      
+      - `npx tsc --noEmit` result                                                                                                                                                                                                                
+      - Commit hash                                                                                                                                                                                                                              
+      - Update DONE_LOG.md                                                                                                                                                                                                                       
+
+- [x] MySQL Phase E3 — PHI masking policy + API enforcement (pre/post HIPAA)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add server-side PHI masking for MySQL mode aligned to session-scoped HIPAA verification.
+    - Backend becomes the source of truth for verification state by storing `session.hipaaVerifiedForMemberIds[memberId] = true` after UI verification succeeds.
+  - Acceptance criteria:
+    - A backend endpoint exists for the frontend to mark a member as HIPAA-verified for the current session.
+    - Verification state is stored server-side in the existing session cookie/session lifecycle and expires with the session.
+    - Pre-verify masking uses the same JSON shape and returns `null` for masked fields.
+    - Member masking in MySQL mode covers:
+      - `birthdate`
+      - `ssn`
+      - address fields
+      - `phoneNumber`
+      - `email`
+      - `planName`
+      - `planId`
+    - Case masking in MySQL mode covers:
+      - timeline `text`
+      - email `subject`
+      - email bodies / free-text fields likely to contain PHI
+    - Safe case metadata remains visible before verification:
+      - `caseNumber`, `status`, `priority`, `agent`, `groupNumber`
+      - `createdAt`, `updatedAt`, `closedAt`
+      - counts and attachment metadata (`name`, `type`, `size`, `exportRelativePath`)
+    - After verification, full unmasked payload is returned for that member/case for the remainder of the session.
+    - Audit/logging does not emit PHI; logs include only `memberId` / `caseId` and action outcome.
+    - JSON mode remains unchanged unless a minimal shared-session change is unavoidable.
+  - Notes:
+    - Source of truth decision provided by Rene on 2026-04-25:
+      - HIPAA scope is session-scoped, server-side
+      - masking format should use `null` rather than `"REDACTED"`
+    - Keep scope to policy doc + backend enforcement only; no frontend implementation in this task.
+    - Completed 2026-04-26:
+      - Added session-backed `POST /v1/members/:id/hipaa/verify` for mysql mode.
+      - Enforced pre-verify masking on member and case responses while keeping safe metadata visible.
+      - Blocked attachment downloads in mysql mode until the session is verified for the case/member.
+  - Output:
+    - Files changed + sample masked/unmasked outputs + verification steps + `npx tsc --noEmit`
+
+- [x] MySQL Phase E1 — Pagination for list endpoints (cases + members)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add minimal pagination support for the Salesforce-scale list endpoints in mysql mode:
+      - `GET /v1/cases`
+      - `GET /v1/members`
+    - Keep current JSON behavior intact unless the existing shared route contract requires a safe additive fallback.
+  - Acceptance criteria:
+    - MySQL-backed list reads no longer return the full 11k+/8k+ record sets by default.
+    - Endpoints support a small, explicit pagination contract with deterministic ordering and bounds checking.
+    - Existing auth and route contracts remain backward-compatible or additive-only.
+    - Verification shows paginated mysql-mode responses for both cases and members.
+  - Notes:
+    - Evidence: `docs/agent-queues/QUEUE_INBOX.md`
+    - Keep scope to list pagination only; no search, filtering, or frontend work in this task.
+    - Completed 2026-04-26:
+      - Added mysql-only cursor pagination with `limit` and `cursor` query params.
+      - Cases paginate in `created_at DESC, id DESC` order.
+      - Members paginate in `subscriber_member_id ASC, id ASC` order.
+      - Invalid cursors now return `400 BAD_REQUEST`.
+  - Output:
+    - Files changed + verification commands/results + commit hash.
+
+- [x] MySQL Phase E2 — Search for cases/members (minimal MVP, MySQL mode)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add minimal MySQL-backed search for common AtlasAI lookup keys:
+      - case number / case id
+      - member id / subscriber member id
+      - group number
+      - claim number
+  - Acceptance criteria:
+    - MySQL mode supports a small MVP search path over cases and members using indexed lookups where possible.
+    - Search behavior is deterministic and bounded for Salesforce-scale data.
+    - JSON mode remains unchanged.
+    - Verification includes sample successful lookups for case and member identifiers.
+  - Notes:
+    - Evidence: `docs/agent-queues/QUEUE_INBOX.md`
+    - Keep this task separate from pagination and PHI masking.
+    - Completed 2026-04-30:
+      - Added mysql-only exact-match case search params: `caseNumber`, `caseId`, `memberId`, `groupNumber`, `claimNumber`
+      - Added mysql-only member search params: `subscriberMemberId`, `memberId`, `q`
+      - Preserved cursor pagination shape and masking behavior in mysql mode.
+      - Left JSON mode unchanged.
+  - Output:
+    - Files changed + curl verification commands/results + commit hash.
+
+- [x] Timeline compose follow-up — add reply-thread linkage (`inReplyToId`) for case emails
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add backend support for relating email replies to the originating inbound thread so compose reply mode can persist thread linkage.
+  - Acceptance criteria:
+    - Timeline contract supports storing a reply-to relationship for outbound email entries.
+    - Backend email creation path can optionally persist that relationship.
+    - Existing email-out behavior remains backward compatible when no reply target is provided.
+  - Notes:
+    - Evidence: `TimelineCompose` handoff dated 2026-04-26 (`inReplyToId / thread linking` gap).
+    - Keep separate from the immediate route-parity fix.
+    - Completed 2026-04-30:
+      - Added optional `inReplyToId` support to `POST /v1/cases/:id/emails`
+      - Persisted linkage on outbound timeline entries and rehydrated it on case detail reads
+      - Rejected invalid reply targets unless they reference an `email-in` entry on the same case
+      - Kept existing email-out behavior unchanged when no reply target is provided
+  - Output:
+    - Files changed + verification commands/results + commit hash.
+
+- [x] Timeline compose follow-up — structured call/task metadata instead of text prefixes
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add backend contract support for structured call direction/duration and task due-date metadata instead of encoding those values into timeline text.
+  - Acceptance criteria:
+    - Timeline or related contract can represent:
+      - call direction
+      - call duration
+      - task due date
+    - Compose-triggered case activity routes can persist that metadata without relying on text prefixes.
+    - Existing timeline rendering remains backward compatible for legacy entries.
+  - Notes:
+    - Evidence: `TimelineCompose` handoff dated 2026-04-26 (`Call direction/duration not structured` gap).
+    - Keep separate from reply-thread linkage and route parity.
+    - Completed 2026-04-30:
+      - Added optional `direction` and `durationSeconds` support to `POST /v1/cases/:id/calls`
+      - Persisted `taskDueDate`, `callDirection`, and `callDurationSeconds` on timeline entries
+      - Kept existing timeline text generation and old route bodies working for backward compatibility
+  - Output:
+    - Files changed + verification commands/results + commit hash.
+  - Output:
+    - Files changed + verification commands/results + commit hash.
+
+- [x] MySQL Phase D — Add MySQL indexes + perf guardrails for Salesforce-scale data
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add MySQL indexes needed for Salesforce-scale performance (case detail, timeline, attachments, user lookups).
+  - Acceptance criteria:
+    - Schema adds indexes for:
+      - cases.id, cases.case_number
+      - case_timeline.case_id + timestamp (and maybe type)
+      - case_attachments.case_id
+      - users.email
+      - members.id + subscriber_member_id
+    - No route contract changes.
+    - MySQL mode still boots and /v1/cases/:id works.
+    - npx tsc --noEmit passes.
+  - Output:
+    - Files changed + quick before/after timing (time curl) + commit hash.
+
+- [x] MySQL Phase C4 — Import Salesforce attachment metadata into MySQL + enable download in mysql mode
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Add MySQL-mode parity for Salesforce attachment/document handling using the dated export:
+      - imports/salesforce/exports/2026-04-25/
+    - In mysql mode, populate `CaseDetail.attachments` from MySQL (not JSON) and make the existing download endpoint work under `REPO_DRIVER=mysql`.
+  - Scope (strict):
+    - In scope:
+      - MySQL schema + repos for storing case-linked attachment metadata
+      - MySQL-mode import for:
+        - legacy Attachment.csv + Attachments/
+        - modern ContentDocumentLink.csv + ContentVersion.csv + ContentVersion/
+      - API parity:
+        - GET /v1/cases/:id returns `attachments[]` when REPO_DRIVER=mysql
+        - GET /v1/cases/:caseId/attachments/:attachmentId/download returns binary payloads in mysql mode using `exportRelativePath`
+      - Idempotent importer behavior for mysql mode (safe to run twice with stable counts)
+    - Out of scope:
+      - Uploading binaries, copying/moving files, or serving a general “file browser”
+      - Any frontend/UI changes
+      - Any timeline import changes (already done in C3)
+  - Acceptance criteria:
+    - Schema:
+      - A MySQL table exists to store attachment metadata and linkage (including: id, case_id, kind, linkKind, name/title, mime/fileType, sizeBytes, owner, createdAt, exportRelativePath, sourceTrace JSON)
+      - No PHI is introduced into new indexes; ids should be Salesforce IDs + internal keys only
+    - Import:
+      1) Start mysql:
+         - cd /Users/rene/ai-dev-workspace/atlasai
+         - docker compose up -d atlasai-mysql
+      2) Init schema baseline:
+         - cd /Users/rene/ai-dev-workspace/atlasai-backend
+         - MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init
+      3) Run core + timeline first (required pre-req):
+         - REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp
+         - REPO_DRIVER=mysql ... npm run import:salesforce:timeline
+      4) Run attachments import in mysql mode (new behavior):
+         - REPO_DRIVER=mysql ... npm run import:salesforce:attachments
+      - The import prints counts (mysql mode) for:
+        - legacyAttachmentsImported
+        - modernDocsImported (case-direct + related-record)
+        - casesTouched
+        - skipped (bucketed by reason, no PHI)
+      - Running the mysql attachment import twice yields identical stored counts (idempotent)
+    - API parity in mysql mode:
+      - Login returns 200
+      - GET /v1/cases/500Hu00002Qox7zIAB returns attachments.length > 0 (expected 5 for this case)
+      - Download works (200 + non-JSON content-type + filename) for both:
+        - CASE_ID=500Hu00002Qox7zIAB, ATTACHMENT_ID=sf-content-link-06AHu000013ndHdMAI
+        - CASE_ID=500Hu00002Qox7zIAB, ATTACHMENT_ID=sf-attachment-00PHu00002lajW7MAI
+      - Endpoint still blocks path traversal attempts (400) and returns 404 for missing case/attachment/file
+    - Type safety:
+      - npx tsc --noEmit passes
+  - Notes:
+    - Keep JSON mode unchanged.
+    - Do not move/copy binaries; resolve from `imports/salesforce/exports/2026-04-25/<...>` using `exportRelativePath`.
+    - Case IDs to verify:
+      - 500Hu00002Qox7zIAB (mixed, expected 5)
+      - 500Hu00002QF3ExIAL (single direct)
+      - 500Hu00002RUXy5IAH (high volume)
+  - Output:
+    - Files changed
+    - Import counts printed
+    - Curl proof (mysql mode) for:
+      - /v1/auth/login
+      - /v1/cases/500Hu00002Qox7zIAB (attachments count)
+      - /v1/cases/:id/attachments/:attachmentId/download (headers + byte length)
+    - Commit hash + push confirmation
+    - Update DONE_LOG.md (and BLOCKED.md only if blocked)
+
+- [x] MySQL Phase C2 — Reconcile Salesforce member count mismatch and add import audit
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Reconcile the mysql-mode Salesforce MVP member-count mismatch from Phase C1 and add deterministic audit reporting for member merges/skips.
+  - Acceptance criteria:
+    - mysql-mode `npm run import:salesforce:mvp` reports:
+      - total contacts processed
+      - inserted members
+      - updated members
+      - skipped members with reason buckets
+      - duplicate collision counts with redacted sample keys
+      - a reconciliation line explaining the stored-count delta
+    - Running `db:mysql:init` then `npm run import:salesforce:mvp` twice in mysql mode yields identical stored counts and identical audit totals.
+    - JSON-mode importer behavior/output remains unchanged.
+    - `docs/qa-analysis/2026-04-25_mysql_salesforce_mvp_import_audit.md` explains the root cause and chosen policy.
+  - Notes:
+    - Root cause investigation must distinguish duplicate `Member_ID__c` collisions from retained seed/demo data.
+    - Scope remains core importer only; do not add timeline or attachment import here.
+  - Output:
+    - Files changed + commands run + key audit outputs + commit hash.
+
+- [x] MySQL Phase C1 — Import Salesforce core data into MySQL (Cases/Members/Accounts/Users)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Implement MySQL-writer support for the dated Salesforce export at:
+      - imports/salesforce/exports/2026-04-25/
+    - Import ONLY core entities into MySQL when REPO_DRIVER=mysql:
+      - Cases (Case.csv)
+      - Members/Contacts (Contact.csv)
+      - Accounts/Groups (Account.csv)
+      - Users/Agents (User.csv)
+    - Preserve Salesforce traceability fields already in contract (sourceTrace.*).
+    - Keep JSON mode unchanged.
+  - Scope (strict):
+    - In scope:
+      - Core import only (cases/members/accounts/users) into MySQL
+      - Idempotent/upsert behavior (safe to run twice; no duplicates)
+    - Out of scope (NOT in this task):
+      - Timeline import (CaseHistory2, EmailMessage, Task, FeedPost)
+      - Attachment metadata import (Attachment, ContentDocumentLink, ContentVersion)
+      - Any UI/frontend work
+  - Acceptance criteria:
+    - With MySQL running (host port 3308), the importer runs in mysql mode and populates MySQL-backed API:
+      1) Start mysql:
+         - cd /Users/rene/ai-dev-workspace/atlasai
+         - docker compose up -d atlasai-mysql
+      2) Init schema/seed baseline:
+         - cd /Users/rene/ai-dev-workspace/atlasai-backend
+         - MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init
+      3) Run importer in mysql mode (choose one path; document it):
+         - REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp
+         - OR npm run import:salesforce:mvp:mysql (if a new script is added)
+    - After import in mysql mode:
+      - Login works (200)
+      - GET /v1/cases returns > 1000 (ideally ~11.5k)
+      - GET /v1/members returns > 1000 (ideally ~8.2k)
+      - Sample fetch works: GET /v1/cases/500Hu00002Qox7zIAB returns 200
+    - JSON default still works when REPO_DRIVER is unset and returns the JSON-backed counts (no regressions).
+    - npx tsc --noEmit passes.
+  - Notes:
+    - Use repo abstraction; when REPO_DRIVER=mysql, write via MySQL repos (no JSON writes).
+    - Add minimal upsert methods to repos ONLY if needed.
+    - Must be idempotent (upsert keyed by Salesforce IDs).
+    - Do not change timeline/attachments in this run.
+  - Output:
+    - Files changed
+    - Imported counts printed by the importer
+    - Exact commands run
+    - curl proof for:
+      - /v1/auth/login
+      - /v1/cases | count
+      - /v1/members | count
+      - /v1/cases/500Hu00002Qox7zIAB
+    - Commit hash + push confirmation
+    - Update DONE_LOG.md (and BLOCKED.md only if blocked)
+
+- [x] MySQL Phase C3 — Import Salesforce timeline into MySQL
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Extend the Salesforce importer so `REPO_DRIVER=mysql` imports timeline data from:
+      - `CaseHistory2.csv`
+      - `EmailMessage.csv`
+      - `Task.csv`
+      - `FeedPost.csv`
+    - Persist timeline rows into MySQL using the existing backend timeline contract and preserve Salesforce traceability.
+  - Scope (strict):
+    - In scope:
+      - MySQL-only timeline import path
+      - Idempotent timeline reloads
+      - MySQL storage for `subject`, `from`, `to`, `cc`, `bcc`, and `sourceTrace`
+    - Out of scope:
+      - Attachment metadata import into MySQL
+      - Any frontend/UI changes
+  - Acceptance criteria:
+    - `npm run import:salesforce:timeline` branches by `REPO_DRIVER`, with JSON behavior unchanged and MySQL writing to `case_timeline`.
+    - Running the mysql timeline import twice yields identical imported counts and identical stored Salesforce timeline counts.
+    - `GET /v1/cases/500Hu00002Qox7zIAB` returns a non-empty timeline in mysql mode.
+    - Verification includes a redacted example of:
+      - one `email-in` or `email-out` row with `subject`/`from`/`to`
+      - one `open`/`close`/`status` row from `CaseHistory2`
+      - `sourceTrace`
+    - `npx tsc --noEmit` passes.
+  - Notes:
+    - Additive MySQL schema changes only.
+    - Do not print PHI in logs; redact email/subject values in verification output.
+  - Output:
+    - Files changed
+    - Commands run + key outputs (timeline import counts + stored counts)
+    - Commit hash + push confirmation
+    - Update DONE_LOG.md (and BLOCKED.md only if blocked)
+
+- [x] ✅ (Seed) Create the queue system files + initial structure (this folder)
+- [x] ✅ (Seed) Review Gemini’s first QA report and convert valid items into official queue tasks
+- [x] ✅ (Seed) Salesforce export triage → AtlasAI mapping plan (review-only, no code)
+- [x] ✅ Process QUEUE_INBOX.md → convert to official queue tasks
+- [x] Start MySQL now (Phase B): add MySQL docker service + mysql-mode bootstrap
+- [x] Implement Salesforce attachment download endpoint using exportRelativePath
+- [x] Define import-ready Salesforce MVP contract for cases and members
+- [x] Extend case timeline contract for Salesforce event coverage
+- [x] Add Salesforce import safety guardrails before any implementation
+- [x] Define Salesforce attachment/document linkage contract for case imports
+- [x] Implement Salesforce importer MVP for Cases + Members + Users
+- [x] Implement Salesforce timeline import using the current timeline contract
+- [x] Implement attachment metadata import and case linkage using export-relative paths
+
+- [x] Postgres Phase A — Add optional Postgres docker service + postgres-mode bootstrap (keep JSON default)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Acceptance: Add postgres service to atlasai/docker-compose.yml and make REPO_DRIVER=postgres boot + login + /v1/cases work; JSON remains default.
+  - Source: QUEUE_INBOX.md (2026-04-30)
+  - Completed 2026-04-30:
+    - Added `atlasai-postgres` to AtlasAI compose on host port `5433` with a named volume and healthcheck.
+    - Added a new `postgres` repo driver behind the existing user/member/case/rbac repo interfaces.
+    - Added `npm run db:pg:init` to create schema + seed Postgres from the current AtlasAI JSON data.
+    - Added a fail-fast startup guard when `REPO_DRIVER=postgres` is selected and Postgres is unreachable or misconfigured.
+
+- [x] Postgres Phase B — Import Salesforce MVP data into Postgres (cases + members + users)
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Extend the existing Salesforce MVP importer so `REPO_DRIVER=postgres` writes the same core entities as the mysql path:
+      - Cases
+      - Members/Contacts
+      - Accounts/Groups-derived member fields
+      - Users/Agents
+    - Keep JSON mode unchanged and keep the API contracts identical across drivers.
+  - Scope (strict):
+    - In scope:
+      - Postgres-only core importer path
+      - Idempotent/upsert behavior
+      - Stored-count verification through the Postgres-backed API
+    - Out of scope:
+      - Timeline import
+      - Attachment metadata import
+      - Frontend changes
+  - Acceptance criteria:
+    - With Postgres running (host port `5433`), the importer runs in postgres mode and populates the Postgres-backed API:
+      1) Start Postgres:
+         - `cd /Users/rene/ai-dev-workspace/atlasai`
+         - `docker compose up -d atlasai-postgres`
+      2) Init schema/baseline:
+         - `cd /Users/rene/ai-dev-workspace/atlasai-backend`
+         - `PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=atlasai PGUSER=atlasai PGPASSWORD=change_me npm run db:pg:init`
+      3) Run importer in postgres mode:
+         - `REPO_DRIVER=postgres PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=atlasai PGUSER=atlasai PGPASSWORD=change_me PGPOOLSIZE=10 npm run import:salesforce:mvp`
+    - After import in postgres mode:
+      - Login works (`200`)
+      - `GET /v1/cases?limit=50` returns a paginated envelope with `items.length=50`
+      - `GET /v1/members?limit=50` returns a paginated envelope with `items.length=50`
+      - `GET /v1/cases/500Hu00002Qox7zIAB` returns `200`
+      - Stored counts are Salesforce-scale (`cases > 1000`, `members > 1000`, `users > 50`)
+    - JSON default still works when `REPO_DRIVER` is unset.
+    - `npx tsc --noEmit` passes.
+  - Notes:
+    - Reuse the existing MVP mapping and duplicate-member dedupe policy from the mysql importer.
+    - Use parameterized Postgres queries only.
+    - Do not import timeline/attachments in this run.
+  - Completed 2026-05-01:
+    - Extended `npm run import:salesforce:mvp` to branch for `REPO_DRIVER=postgres`.
+    - Imported Salesforce MVP core entities into Postgres with the same member dedupe policy as the mysql path.
+    - Cleared Postgres timeline and attachment tables during the MVP import so the task remains core-entities only.
+    - Verified Postgres-backed login, paginated case/member lists, and sample case detail.
+  - Output:
+    - Files changed
+    - Imported counts printed by the importer
+    - Exact commands run
+    - Verification for login, list cases, list members, and case detail
+    - Commit hash + push confirmation
+
+- [x] Postgres Phase B2 — Normalize invalid subscriber member IDs to canonical No Member during MVP import
+  - Owner: Codex
+  - Repo: atlasai-backend
+  - Goal:
+    - Make the Postgres MVP importer deterministic and safe by mapping invalid subscriber/member identifiers to the canonical `0000` No Member row instead of creating bad member records.
+  - Acceptance criteria:
+    - Postgres MVP import never creates member rows with invalid `subscriber_member_id` values such as `,`, `.`, `0`, `00`, or `0000` except the canonical `0000` No Member row.
+    - Cases referencing invalid member identifiers are reassigned to `member_id='0000'`.
+    - Running the Postgres MVP import twice yields identical counts and no bad member rows.
+    - Postgres-mode import prints audit fields for:
+      - `membersMappedToNoMember`
+      - `invalidSubscriberMemberIdSamples`
+      - `casesMappedToNoMember`
+    - SQL sanity checks pass for bad members, bad cases, and `no_member_cases`.
+    - JSON and mysql behavior remain unchanged.
+  - Completed 2026-05-01:
+    - Added Postgres-only invalid subscriber/member ID normalization during MVP import.
+    - Guaranteed the canonical `0000` No Member row in Postgres baseline init.
+    - Added Postgres-only importer audit fields for invalid member normalization and case reassignment.
+    - Verified repeated import determinism and SQL integrity checks after import.
+  - Output:
+    - Files changed
+    - Commands run + audit outputs + SQL sanity outputs
+    - Commit hash + push confirmation

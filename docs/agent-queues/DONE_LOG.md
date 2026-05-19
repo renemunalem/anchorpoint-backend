@@ -1,0 +1,1103 @@
+# DONE LOG (AtlasAI)
+
+Format:
+- Date
+- Completed task title
+- Owner (Claude/Codex/Gemini)
+- Repo
+- PR/commit reference if applicable
+- Verification notes
+
+---
+
+## Completed
+
+- Date: 2026-05-01
+- Completed task title: Postgres Phase B2 — Normalize invalid subscriber member IDs to canonical No Member during MVP import
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: pending (after commit)
+- Verification notes:
+  - Added Postgres-only invalid subscriber/member ID normalization during `npm run import:salesforce:mvp`:
+    - invalid IDs now map to canonical member `0000`
+    - cases referencing invalid IDs now import with `member_id='0000'`
+    - JSON and mysql paths were left unchanged
+  - Ensured `scripts/init-postgres.ts` always seeds the canonical `0000` No Member row.
+  - Verified static safety:
+    - `npx tsc --noEmit` passed
+  - Verified Postgres baseline reset:
+    - `PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=atlasai PGUSER=atlasai PGPASSWORD=change_me npm run db:pg:init`
+    - Outcome:
+      - `Initialized AtlasAI Postgres DB at 127.0.0.1:5433/atlasai`
+      - `Seeded 53 users, 8205 members (from 8275 source rows), 11566 cases, 31201 timeline entries, 1292 attachments, 4 RBAC records.`
+  - Verified first Postgres MVP import:
+    - `REPO_DRIVER=postgres PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=atlasai PGUSER=atlasai PGPASSWORD=change_me PGPOOLSIZE=10 npm run import:salesforce:mvp`
+    - Outcome:
+      - `stored.cases=11566`
+      - `stored.members=8091`
+      - `stored.users=53`
+      - `audit.membersInserted=8091`
+      - `audit.membersMappedToNoMember=115`
+      - `audit.casesMappedToNoMember=52`
+      - `audit.invalidSubscriberMemberIdSamples.length=10`
+  - Verified second Postgres MVP import with identical counts/audit:
+    - same command and identical outcome:
+      - `stored.cases=11566`
+      - `stored.members=8091`
+      - `stored.users=53`
+      - `audit.membersInserted=8091`
+      - `audit.membersMappedToNoMember=115`
+      - `audit.casesMappedToNoMember=52`
+  - Verified SQL integrity checks in Postgres:
+    - `bad_members = 0`
+    - `bad_cases = 0`
+    - `no_member_cases = 52`
+    - `broken_case_member_joins = 0`
+  - Verified Postgres-mode runtime:
+    - backend container reported `Persistence driver: postgres (atlasai-postgres:5432/atlasai)`
+    - `POST /v1/auth/login` -> `200 OK`
+    - `GET /v1/cases?limit=50` -> `200 OK`, `items.length=50`, `hasNext=true`
+    - `GET /v1/cases/500Hu00002Qox7zIAB` -> `200 OK`
+    - sample case detail still resolved to `memberId=210120001300`
+
+- Date: 2026-04-25
+- Completed task title: MySQL Phase C3 — Import Salesforce timeline into MySQL
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: backend commit only
+- Verification notes:
+  - Extended `npm run import:salesforce:timeline` to branch by `REPO_DRIVER`:
+    - JSON mode keeps the existing JSON timeline import behavior
+    - MySQL mode writes Salesforce timeline rows into `case_timeline`
+  - Added additive MySQL timeline storage for:
+    - `sender_from`
+    - `recipient_cc`
+    - `recipient_bcc`
+    - `source_trace`
+  - Widened `case_timeline.text` to `MEDIUMTEXT` after the first mysql import attempt hit `Data too long for column 'text'`
+  - Verified static safety:
+    - `npx tsc --noEmit`
+  - Verified clean mysql baseline:
+    - `cd /Users/rene/ai-dev-workspace/atlasai && docker compose up -d atlasai-mysql`
+    - `cd /Users/rene/ai-dev-workspace/atlasai-backend && MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - Outcome:
+      - `Initialized AtlasAI MySQL DB at 127.0.0.1:3308/atlasai`
+      - `Seeded 3 users, 20 members, 20 cases, 4 RBAC records.`
+  - Reloaded mysql Salesforce core data:
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+  - Verified first mysql timeline import:
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:timeline`
+    - Outcome:
+      - `caseHistoryEntries=24318`
+      - `emailEntries=2712`
+      - `taskEntries=1059`
+      - `feedEntries=3109`
+      - `totalEntries=31198`
+      - `casesTouched=11566`
+      - `audit.inserted=31198`
+      - `audit.updated=0`
+      - `audit.skipped=26`
+      - `audit.skipReasons.email_case_not_found=1`
+      - `audit.skipReasons.task_case_not_found=3`
+      - `audit.skipReasons.feed_case_not_found=22`
+      - `audit.storedSalesforceEntries=31198`
+  - Verified second mysql timeline import:
+    - same command and identical outcome:
+      - `totalEntries=31198`
+      - `casesTouched=11566`
+      - `audit.inserted=31198`
+      - `audit.updated=0`
+      - `audit.skipped=26`
+      - `audit.storedSalesforceEntries=31198`
+  - Verified mysql-backed API:
+    - switched backend container to mysql mode with:
+      - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+    - login proof:
+      - `curl -i -s -c /tmp/atlasai-mysql-timeline.cookies -H 'Content-Type: application/json' -d '{"email":"admin@atlasai.local","password":"change_me"}' http://127.0.0.1:3000/v1/auth/login`
+      - Outcome: `HTTP/1.1 200 OK`
+    - requested case proof:
+      - `curl -s -b /tmp/atlasai-mysql-timeline.cookies http://127.0.0.1:3000/v1/cases/500Hu00002Qox7zIAB | jq '{id, caseNumber, timelineCount:(.timeline|length)}'`
+      - Outcome:
+        - `id=500Hu00002Qox7zIAB`
+        - `caseNumber=00001096`
+        - `timelineCount=11`
+    - redacted example email + status proof:
+      - `curl -s -b /tmp/atlasai-mysql-timeline.cookies http://127.0.0.1:3000/v1/cases/500Hu00002SmtC4IAJ | jq '{emailExample:(.timeline | map(select(.type=="email-in" or .type=="email-out")) | .[0] | {id,type,subject:(if .subject then "[present]" else null end), from:(if .from then "[present]" else null end), to:(if .to then "[present]" else null end), sourceTrace}), statusExample:(.timeline | map(select(.type=="status" or .type=="open" or .type=="close")) | .[0] | {id,type,toStatus,sourceTrace})}'`
+      - Outcome includes:
+        - `emailExample.type=email-in`
+        - `subject=[present]`
+        - `from=[present]`
+        - `to=[present]`
+        - `sourceTrace.object=EmailMessage`
+        - `statusExample.type=open`
+        - `statusExample.sourceTrace.object=CaseHistory2`
+
+- Date: 2026-04-25
+- Completed task title: MySQL Phase C2 — Reconcile Salesforce member count mismatch and add import audit
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: backend commit only
+- Verification notes:
+  - Added mysql-only import audit output to `npm run import:salesforce:mvp` with:
+    - `contactsProcessed`
+    - `membersInserted`
+    - `membersUpdated`
+    - `skippedMembers` reason buckets
+    - `duplicateKeyCollisions` with redacted sample keys
+    - `reconciliation`
+  - Root cause of the old Phase C1 `-50` mismatch was reconciled as:
+    - `-70` duplicate Salesforce contact rows across `69` repeated `Member_ID__c` keys
+    - `+20` retained seed/demo members from `db:mysql:init`
+    - net stored count observed in Phase C1: `8225`
+  - Phase C2 importer policy now replaces the mysql core case/member dataset on each run so the stored member count is deterministic:
+    - `8275` contacts processed
+    - `8205` unique members stored
+    - `70` duplicate contact rows merged
+  - Added audit note:
+    - `docs/qa-analysis/2026-04-25_mysql_salesforce_mvp_import_audit.md`
+  - Verified static safety:
+    - `npx tsc --noEmit`
+  - Verified clean baseline:
+    - `cd /Users/rene/ai-dev-workspace/atlasai && docker compose up -d atlasai-mysql`
+    - `cd /Users/rene/ai-dev-workspace/atlasai-backend && MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - Outcome:
+      - `Initialized AtlasAI MySQL DB at 127.0.0.1:3308/atlasai`
+      - `Seeded 3 users, 20 members, 20 cases, 4 RBAC records.`
+  - Verified first mysql import run:
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+    - Outcome:
+      - `stored.cases=11566`
+      - `stored.members=8205`
+      - `stored.users=53`
+      - `audit.contactsProcessed=8275`
+      - `audit.membersInserted=8205`
+      - `audit.membersUpdated=0`
+      - `audit.skippedMembers.total=70`
+      - `audit.duplicateKeyCollisions.distinctKeys=69`
+      - redacted sample collision key: `2100***500`
+  - Verified second mysql import run:
+    - same command and identical outcome:
+      - `stored.cases=11566`
+      - `stored.members=8205`
+      - `stored.users=53`
+      - `audit.contactsProcessed=8275`
+      - `audit.membersInserted=8205`
+      - `audit.membersUpdated=0`
+      - `audit.skippedMembers.total=70`
+      - `audit.duplicateKeyCollisions.distinctKeys=69`
+  - JSON-mode importer output remains unchanged because the audit is emitted only when `REPO_DRIVER=mysql`
+
+- Date: 2026-04-25
+- Completed task title: MySQL Phase C1 — Import Salesforce core data into MySQL (Cases/Members/Accounts/Users)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: backend commit only
+- Verification notes:
+  - Extended `npm run import:salesforce:mvp` to branch by `REPO_DRIVER`:
+    - `json` keeps the existing JSON store importer behavior
+    - `mysql` writes core Salesforce users, members, and cases into MySQL with `ON DUPLICATE KEY UPDATE`
+  - Added MySQL persistence for Salesforce `sourceTrace` on:
+    - `users.source_trace`
+    - `members.source_trace`
+    - `cases.source_trace`
+  - Added schema/init compatibility so `npm run db:mysql:init` upgrades existing local MySQL tables with the new `source_trace` columns before seeding
+  - Verified static safety:
+    - `npx tsc --noEmit`
+  - Verified MySQL service startup from `/Users/rene/ai-dev-workspace/atlasai`:
+    - `docker compose up -d atlasai-mysql`
+  - Verified MySQL init from `/Users/rene/ai-dev-workspace/atlasai-backend`:
+    - `MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - Outcome: `Initialized AtlasAI MySQL DB at 127.0.0.1:3308/atlasai`
+    - Outcome: `Seeded 3 users, 20 members, 20 cases, 4 RBAC records.`
+  - Verified Salesforce core import in mysql mode:
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+    - First run outcome:
+      - imported: `cases=11566`, `members=8275`, `users=50`
+      - stored: `cases=11586`, `members=8225`, `users=53`
+    - Second run outcome (idempotence check): identical stored counts:
+      - `cases=11586`, `members=8225`, `users=53`
+  - Verified AtlasAI backend in mysql mode via compose env:
+    - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+    - Container log confirmed: `Persistence driver: mysql (atlasai-mysql:3306/atlasai)`
+  - Curl proof in mysql mode:
+    - login:
+      - `curl -i -s -c /tmp/atlasai-mysql-phasec1.cookies -H 'Content-Type: application/json' -d '{"email":"admin@atlasai.local","password":"change_me"}' http://127.0.0.1:3000/v1/auth/login`
+      - Outcome: `HTTP/1.1 200 OK`
+    - cases count:
+      - `curl -s -b /tmp/atlasai-mysql-phasec1.cookies http://127.0.0.1:3000/v1/cases | jq length`
+      - Outcome: `11586`
+    - members count:
+      - `curl -s -b /tmp/atlasai-mysql-phasec1.cookies http://127.0.0.1:3000/v1/members | jq length`
+      - Outcome: `8225`
+    - sample Salesforce case:
+      - `curl -i -s -b /tmp/atlasai-mysql-phasec1.cookies http://127.0.0.1:3000/v1/cases/500Hu00002Qox7zIAB`
+      - Outcome: `HTTP/1.1 200 OK`
+      - Response includes `sourceTrace` with Salesforce IDs and the imported member snapshot for case `500Hu00002Qox7zIAB`
+  - Verified JSON default remains unchanged after recreating the backend without `REPO_DRIVER`:
+    - `docker compose up -d atlasai-backend`
+    - backend log confirmed: `Persistence driver: json`
+    - `curl -s -b /tmp/atlasai-json-phasec1.cookies http://127.0.0.1:3000/v1/cases | jq length`
+    - Outcome: `11566`
+    - `curl -s -b /tmp/atlasai-json-phasec1.cookies http://127.0.0.1:3000/v1/members | jq length`
+    - Outcome: `8275`
+
+- Date: 2026-04-25
+- Completed task title: Start MySQL now (Phase B): add MySQL docker service + mysql-mode bootstrap
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: backend commit + compose-only frontend commit
+- Verification notes:
+  - Added AtlasAI mysql service in `/Users/rene/ai-dev-workspace/atlasai/docker-compose.yml` using host port `3308:3306` to avoid the protected Nexus conflict on `3307`
+  - Wired optional backend mysql envs in Compose while keeping `REPO_DRIVER=${REPO_DRIVER:-json}` so JSON remains the default
+  - Added mysql fail-fast startup guard in `src/server.ts`:
+    - validates mysql config
+    - runs `SELECT 1`
+    - exits with a clear error before Express starts if mysql is unreachable or misconfigured
+  - Verified static safety with `npx tsc --noEmit`
+  - Verified stack startup from `/Users/rene/ai-dev-workspace/atlasai`:
+    - `docker compose up -d --build`
+    - AtlasAI mysql container became healthy on `0.0.0.0:3308->3306`
+  - Verified mysql bootstrap from `/Users/rene/ai-dev-workspace/atlasai-backend`:
+    - `MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - Outcome: `Initialized AtlasAI MySQL DB at 127.0.0.1:3308/atlasai`
+    - Outcome: `Seeded 3 users, 20 members, 20 cases, 4 RBAC records.`
+  - Verified mysql mode by recreating the backend container with:
+    - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+    - Container logs confirmed: `Persistence driver: mysql (atlasai-mysql:3306/atlasai)`
+    - Login verification:
+      - `curl -i -s -c /tmp/atlasai-mysql.cookies -H 'Content-Type: application/json' -d '{"email":"admin@atlasai.local","password":"change_me"}' http://127.0.0.1:3000/v1/auth/login`
+      - Outcome: `HTTP/1.1 200 OK`
+    - Cases verification:
+      - `curl -s -b /tmp/atlasai-mysql.cookies http://127.0.0.1:3000/v1/cases | jq length`
+      - Outcome: `20`
+    - Members verification:
+      - `curl -s -b /tmp/atlasai-mysql.cookies http://127.0.0.1:3000/v1/members | jq length`
+      - Outcome: `20`
+  - Verified return to default JSON mode by recreating the backend container with:
+    - `docker compose up -d atlasai-backend`
+    - Login verification:
+      - `curl -i -s -c /tmp/atlasai-json2.cookies -H 'Content-Type: application/json' -d '{"email":"admin@atlasai.local","password":"change_me"}' http://127.0.0.1:3000/v1/auth/login`
+      - Outcome: `HTTP/1.1 200 OK`
+    - Cases verification:
+      - `curl -s -b /tmp/atlasai-json2.cookies http://127.0.0.1:3000/v1/cases | jq length`
+      - Outcome: `11566`
+    - Members verification:
+      - `curl -s -b /tmp/atlasai-json2.cookies http://127.0.0.1:3000/v1/members | jq length`
+      - Outcome: `8275`
+
+- Date: 2026-04-25
+- Completed task title: Process QUEUE_INBOX.md item for Case Detail redesign Phase B
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed the first unchecked inbox item for Case Detail redesign Phase B timeline UX
+  - Confirmed a matching official Claude task already exists:
+    - `Case Detail Phase B — Timeline item card refinement`
+  - Marked the inbox item as moved to that existing Claude queue task
+  - Added no duplicate task and no extra roadmap items
+
+- Date: 2026-04-25
+- Completed task title: Triage Gemini Phase A Case Detail retest report
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_case_detail_redesign_phaseA_retest.md`
+  - Report verdict: PASS — all Phase A acceptance criteria met (page head, identity strip, key-facts strip, two-column layout, HIPAA verify, email unlock, 5 attachment download buttons)
+  - No bugs found, no regressions, no backend issues
+  - Confirmed `claude/render-salesforce-attachments-ui` already merged to frontend main at commit `e485a64`
+  - Confirmed Phase A implementation on branch `feat/case-detail-phase-a` (commits `1cde5a5`, `a03485e`) not yet merged to main
+  - Marked both completed tasks as `[x] ✅` in `CLAUDE_FRONTEND_QUEUE.md`
+  - Added 2 new Claude tasks:
+    - `Merge Case Detail Phase A branch to main` (branch hygiene; Phase A verified by QA)
+    - `Case Detail Phase B — Timeline item card refinement` (from report's next-best-dev-prompt)
+  - No backend queue additions required (clean PASS, no API contract issues)
+  - No new BLOCKED entries required
+
+- Date: 2026-04-25
+- Completed task title: Log Case Detail redesign Phase A PASS retest
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_case_detail_redesign_phaseA_retest.md`
+  - Confirmed Gemini verdict is `PASS`
+  - Confirmed the Claude queue item `Redesign Case Detail Phase A (layout + IA only, preserve all behavior)` is already marked done
+  - PASS coverage in the report includes:
+    - compact page head
+    - identity strip
+    - key-facts strip
+    - two-column work area
+    - HIPAA verification still unlocks Email
+    - attachments section visible with 5 Download buttons on `/cases/500Hu00002Qox7zIAB`
+  - No new tasks were created because the report contains no defects and Rene did not explicitly request Phase B
+
+- Date: 2026-04-25
+- Completed task title: Process QUEUE_INBOX.md item for Case Detail redesign Phase A
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_case_detail_redesign_phase_a.md`
+  - Converted the first unchecked inbox item into one official Claude task only:
+    - `Redesign Case Detail Phase A (layout + IA only, preserve all behavior)`
+  - Added the task at the top of `CLAUDE_FRONTEND_QUEUE.md`
+  - Marked the inbox item as moved in `QUEUE_INBOX.md`
+
+- Date: 2026-04-25
+- Completed task title: Implement Salesforce attachment download endpoint using exportRelativePath
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `31529b4`
+- Verification notes:
+  - Added authenticated `GET /v1/cases/:caseId/attachments/:attachmentId/download` to the backend case routes
+  - Validates the attachment is present on the requested case before serving any file
+  - Rejects invalid/path-traversal `exportRelativePath` values with `400`
+  - Streams binaries directly from `imports/salesforce/exports/2026-04-25/` with `Content-Disposition` and best-effort `Content-Type`
+  - Verified TypeScript safety with `npx tsc --noEmit`
+  - Verified live download responses from `atlasai-atlasai-backend-1` using:
+    - `docker exec atlasai-atlasai-backend-1 node -e "... fetch('/v1/auth/login') ... fetch('/v1/cases/500Hu00002Qox7zIAB/attachments/sf-content-link-06AHu000013ndHdMAI/download') ..."`
+    - Outcome: `200`, `application/pdf`, `attachment; filename=\"Ash, Megan 71123.pdf\"`, `213159` bytes
+    - `docker exec atlasai-atlasai-backend-1 node -e "... fetch('/v1/auth/login') ... fetch('/v1/cases/500Hu00002Qox7zIAB/attachments/sf-attachment-00PHu00002lajW7MAI/download') ..."`
+    - Outcome: `200`, `image/png`, `attachment; filename=\"image001.png\"`, `61662` bytes
+  - Verified wrong-case access is rejected:
+    - `docker exec atlasai-atlasai-backend-1 node -e "... fetch('/v1/cases/500Hu00002QF3ExIAL/attachments/sf-content-link-06AHu000013ndHdMAI/download') ..."`
+    - Outcome: `404` with `{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Attachment not found\"}}`
+
+- Date: 2026-04-25
+- Completed task title: Process QUEUE_INBOX.md and convert valid items into official queue tasks
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed inbox evidence from:
+    - `docs/qa-analysis/2026-04-25_salesforce_attachments_render_retest.md`
+    - `docs/qa-analysis/2026-04-25_atlasai_attachments_download_smoke.md`
+  - Marked Gemini's attachment rendering retest task complete after the PASS report confirmed visible counts for:
+    - `500Hu00002QF3ExIAL`
+    - `500Hu00002Qox7zIAB`
+    - `500Hu00002RUXy5IAH`
+  - Confirmed the attachment download failure is still live by running inside `atlasai-atlasai-backend-1`:
+    - `node -e "... fetch('/v1/auth/login') ... fetch('/v1/cases/500Hu00002Qox7zIAB/attachments/sf-content-link-06AHu000013ndHdMAI/download') ..."`
+    - `node -e "... fetch('/v1/auth/login') ... fetch('/v1/cases/500Hu00002Qox7zIAB/attachments/sf-attachment-00PHu00002lajW7MAI/download') ..."`
+  - Verified both sample download endpoints currently return `404`, `application/json; charset=utf-8`, and no `Content-Disposition`
+  - Added three official follow-ups only:
+    - `CLAUDE_FRONTEND_QUEUE.md` → `Review and merge Salesforce attachments UI branch to frontend main`
+    - `CODEX_BACKEND_QUEUE.md` → `Implement Salesforce attachment download endpoint using exportRelativePath`
+    - `GEMINI_QA_QUEUE.md` → `Smoke test Salesforce attachment downloads after backend endpoint lands`
+  - Marked the HIPAA persistence note as blocked pending a product decision and rejected fake-backend attachment stubs as out of scope for the Docker-only flow
+
+- Date: 2026-04-25
+- Completed task title: Triage Salesforce timeline and attachment validation report
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_salesforce_timeline_and_attachments_validation.md`
+  - Validated the reported P1 against the live backend API using sample case `500Hu00002Qox7zIAB`
+  - Confirmed `/v1/cases/500Hu00002Qox7zIAB` returns a populated `attachments` array with `attachmentCount: 5`
+  - Confirmed returned attachment objects include `exportRelativePath` and full Salesforce traceability fields
+  - Determined the finding is frontend-owned because the backend contract and payload are already correct
+  - Closed Gemini's completed timeline/attachment validation queue item
+  - Added one new Claude task for Case Detail attachment rendering and one Gemini retest task after the frontend fix lands
+  - Added no backend queue task because no API/contract mismatch was found
+
+- Date: 2026-04-25
+- Completed task title: Implement attachment metadata import and case linkage using export-relative paths
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: recorded in run output
+- Verification notes:
+  - Added a dedicated attachment metadata importer command at `npm run import:salesforce:attachments`
+  - Imported metadata only from legacy `Attachment.csv` + `Attachments/` and modern `ContentDocumentLink.csv` + latest `ContentVersion.csv` + `ContentVersion/`
+  - Populated `CaseDetail.attachments` for imported cases using both direct case links and related-record links
+  - Preserved Salesforce linkage metadata including `contentDocumentLinkId`, `contentDocumentId`, `contentVersionId`, `attachmentId`, `linkedEntityId`, `linkedEntityType`, and `linkedCaseId`
+  - Stored in-place `exportRelativePath` values only; no binary move/copy/upload or file serving was added
+  - Verified importer result counts:
+    - 15 legacy attachments
+    - 1,277 resolvable `ContentDocumentLink` records
+    - 1,292 total imported attachment metadata rows
+    - 374 cases with linked attachments
+  - Verified mixed linkage examples:
+    - `500Hu00002QF3ExIAL` (`00003780`) -> 1 direct case-linked content version
+    - `500Hu00002Qox7zIAB` (`00001096`) -> 5 attachments with both `case-direct` and `related-record` linkage, including legacy email attachments
+    - `500Hu00002RUXy5IAH` (`00002488`) -> 42 related-record attachment links via `EmailMessage`
+  - Verified API output for `/v1/cases/500Hu00002Qox7zIAB` returns populated `attachments` with `exportRelativePath`
+  - Verified additive safety with `npx tsc --noEmit`
+  - Verified dev auth still passes with `docker exec atlasai-atlasai-backend-1 npm run verify:auth`
+
+- Date: 2026-04-25
+- Completed task title: Implement Salesforce timeline import using the current timeline contract
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: recorded in run output
+- Verification notes:
+  - Added a dedicated timeline importer command at `npm run import:salesforce:timeline`
+  - Imported Salesforce `CaseHistory2`, `EmailMessage`, `Task`, and `FeedPost` rows into the JSON-driver case timelines
+  - Preserved Salesforce traceability on timeline rows with `sourceTrace.object`, `externalId`, `parentId`, and `relatedToId` where available
+  - Populated timeline metadata for email rows (`subject`, `from`, `to`, `cc`, `bcc`) and mapped task call activity into the `call` timeline type
+  - Kept attachments/documents out of scope; no attachment import was added in this phase
+  - Verified importer result counts:
+    - 24,318 `CaseHistory2` rows
+    - 2,712 `EmailMessage` rows
+    - 1,059 `Task` rows
+    - 3,109 `FeedPost` rows
+    - 31,198 total imported timeline rows
+  - Verified sample cases:
+    - `500Hu00002SmtC4IAJ` (`00005452`) -> 57 timeline rows with `open`, `email-in`, `email-out`, `note`, `status`, `close`
+    - `500Hu00002QowOFIAZ` (`00001092`) -> 5 timeline rows with `open`, `note`, `call`, `close`
+  - Verified API output for `/v1/cases/500Hu00002SmtC4IAJ` returns populated timeline rows with Salesforce traceability
+  - Verified additive safety with `npx tsc --noEmit`
+  - Verified dev auth still passes with `docker exec atlasai-atlasai-backend-1 npm run verify:auth`
+
+- Date: 2026-04-25
+- Completed task title: Triage Gemini Salesforce MVP importer + HIPAA retest report
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_salesforce_mvp_and_hipaa_retest_report.md`
+  - Confirmed the report contains no new actionable defect: it records PASS for the Salesforce MVP importer and PASS for the HIPAA retest on a Salesforce-backed case
+  - Verified the importer findings align with the current backend state and prior importer verification:
+    - 11,566 imported cases
+    - 8,275 imported members
+    - 50 imported Salesforce users
+    - local JSON auth users preserved
+  - Closed the corresponding Gemini QA tasks instead of adding duplicate queue items
+  - Added no new queue tasks because the report's suggested next step already exists as the first unchecked backend queue item
+
+- Date: 2026-04-25
+- Completed task title: Implement Salesforce importer MVP for Cases + Members + Users
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: recorded in run output
+- Verification notes:
+  - Added a Salesforce MVP importer command at `npm run import:salesforce:mvp`
+  - Imported the dated 2026-04-25 export into the JSON dev store for core cases, members, and users only
+  - Preserved Salesforce traceability on imported cases, members, and users
+  - Explicitly skipped timeline and attachment/document import in this phase; imported cases have empty `timeline` and `attachments`
+  - Preserved the local JSON-driver seed login users so existing dev auth continues to work after import
+  - Verified counts in the dev store: 11,566 cases, 8,275 members, and 50 imported Salesforce users
+  - Verified sample linkage:
+    - case `500Hu00002QF3EdIAL` -> member `210110083700` -> owner user `005Hu00000TtJaOIAV`
+    - case `500Hu00002QF3ExIAL` -> member `210110083700` -> owner user `005Hu00000TtJaOIAV`
+  - Verified additive safety with `npx tsc --noEmit`
+  - Verified dev auth still passes with `docker exec atlasai-atlasai-backend-1 npm run verify:auth`
+
+- Date: 2026-04-25
+- Completed task title: Define Salesforce attachment/document linkage contract for case imports
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `0716a40`
+- Verification notes:
+  - Updated `src/types/models.ts` with additive attachment/document contract types only
+  - Added `CaseAttachmentSummary` on `CaseDetail` for case-linked file metadata
+  - Added Salesforce attachment traceability fields for legacy `Attachment` and modern `ContentDocumentLink` / `ContentVersion`
+  - Added export-relative file path support plus direct-case vs related-record linkage distinction
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-25
+- Completed task title: Add Salesforce import safety guardrails before any implementation
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `a7e4e3f`
+- Verification notes:
+  - Confirmed `/imports/` is ignored at the repo root and no files under `imports/` are tracked
+  - Added encoding rules in `docs/imports/salesforce/encoding.md`
+  - Added PHI allowlist/masking rules in `docs/imports/salesforce/phi.md`
+  - Cleared the prior blocker because the required guardrails are now documented
+  - No importer logic was added
+
+- Date: 2026-04-25
+- Completed task title: Extend case timeline contract for Salesforce event coverage
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: not committed in this run
+- Verification notes:
+  - Updated `src/types/models.ts` only
+  - Added timeline event types `email-in` and `call` while preserving existing event types
+  - Added optional timeline traceability metadata via `sourceTrace` with Salesforce object + external ID
+  - Added optional sender/recipient metadata fields: `from`, `to`, `cc`, `bcc`, and kept `subject`
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-25
+- Completed task title: Refresh Salesforce export docs for binary-ready dated export
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: recorded in run output
+- Verification notes:
+  - Verified dated export payload directories exist:
+    - `imports/salesforce/exports/2026-04-25/ContentVersion/` with 893 files
+    - `imports/salesforce/exports/2026-04-25/Attachments/` with 15 files
+  - Verified matching dated-export metadata:
+    - `Attachment.csv` with 15 data rows
+    - `ContentVersion.csv` with 893 data rows
+    - `ContentDocumentLink.csv` with 2,179 data rows
+  - Updated validation and mapping reports to remove the old missing-binaries blocker
+  - Added one backend queue task for attachment/document linkage contract work only
+
+- Date: 2026-04-25
+- Completed task title: Validate and fix HIPAA verification gating on Case Detail
+- Owner: Claude
+- Repo: atlasai-frontend
+- PR/commit reference: uncommitted working-tree changes (needs commit/PR)
+- Verification notes:
+  - Validated that the fix applied in the prior task fully resolves the Gemini smoke finding (2026-04-25_atlasai_smoke_report.md)
+  - Traced full end-to-end path: modal open → member fallback → caller type → 3 checkbox selects → button enabled → onVerify → sessionStorage write → React state update → Email unlocked
+  - Confirmed `toFakeDetail` always populates `caseDetail.member` for fake cases, so the fallback is always available
+  - Confirmed `fakeMutationStore` spreads `member` through all mutations (addNote, logCall, etc.)
+  - TypeScript passes clean with no errors
+  - No additional code changes required — prior fix was complete and correct
+
+- Date: 2026-04-25
+- Completed task title: Fix Case Detail HIPAA modal identifier gating (`selected` vs `verified`)
+- Owner: Claude
+- Repo: atlasai-frontend
+- PR/commit reference: uncommitted working-tree changes (needs commit/PR)
+- Verification notes:
+  - Root cause 1: `handleIdentifierSelection` in `useHIPAAVerification.ts` updated `selectedIdentifiers` but never `verifiedFields`, so button stayed disabled at "3/3 selected · 0/3 verified"
+  - Root cause 2: `memberService.getById("M1001")` always 404s on fake backend (seed uses "D-..." IDs), leaving modal stuck on "Loading member data…"
+  - Fix 1: In `handleIdentifierSelection` select branch, now also calls `setVerifiedFields([...verifiedFields, identifierId])` — selecting = confirming
+  - Fix 2: In `handleOpenHipaaModal`, falls back to `caseDetail.member` embedded snapshot when service lookup fails
+  - Removed text-input verification path (inputValues/onInputChange props) from hook, IdentifierSelector, and HIPAAVerification — checking 3 boxes is the attestation
+  - Counter updated from "N/3 selected · N/3 verified" to "N/3 confirmed"
+  - TypeScript passes clean (`npx tsc --noEmit`)
+  - Files changed:
+    - src/hooks/useHIPAAVerification.ts
+    - src/components/verification/hipaa/IdentifierSelector.tsx
+    - src/components/verification/hipaa/HIPAAVerification.tsx
+    - src/pages/Cases/AtlasCaseDetailPage.tsx
+
+- Date: 2026-04-25
+- Completed task title: Define import-ready Salesforce MVP contract for cases and members
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: recorded in run output
+- Verification notes:
+  - Updated `src/types/models.ts` with additive Salesforce traceability fields only
+  - Added optional `sourceTrace` metadata to `CaseSummary` and `Member` for external ID/account/contact/owner tracing
+  - Added optional `CaseDetail` fields needed by the mapping report: caller/contact/service-date/claim-status/follow-up style fields
+  - No importer implementation was added
+  - Verified with `npx tsc --noEmit`
+
+- Date: 2026-04-25
+- Completed task title: Triage Gemini retest report and convert valid findings into official queue tasks
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-25_atlasai_retest_hipaa_case_detail.md`
+  - Accepted the finding as valid and reproducible: report includes a stable route (`/cases/M1001`), account, exact modal steps, expected/actual mismatch, and explicit disabled-button evidence
+  - Added one new top-priority Claude task for the frontend gating bug
+  - Re-pointed the existing Gemini retest task to the newer retest report instead of adding a duplicate retest queue item
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Salesforce export triage → AtlasAI mapping plan (review-only, no code)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs updates only
+- Verification notes:
+  - Reviewed Salesforce MVP objects under `imports/salesforce/`
+  - Wrote `docs/qa-analysis/2026-04-25_salesforce_export_to_atlasai_mapping.md`
+  - Mapped Salesforce export fields into current AtlasAI `CaseSummary`, `CaseDetail`, `Member`, and timeline contracts
+  - Added three small backend follow-up tasks only; no importer or backend implementation was added
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Create the queue system files + initial structure (this folder)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit 439e1c7
+- Verification notes:
+  - Created:
+    - docs/agent-queues/QUEUE_RULES.md
+    - docs/agent-queues/CLAUDE_FRONTEND_QUEUE.md
+    - docs/agent-queues/CODEX_BACKEND_QUEUE.md
+    - docs/agent-queues/GEMINI_QA_QUEUE.md
+    - docs/agent-queues/DONE_LOG.md
+    - docs/agent-queues/BLOCKED.md
+    - docs/qa-analysis/README.md
+  - Confirmed files exist and are committed.
+  - Confirmed data/atlasai-dev.json is not committed.
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Browser smoke + critical path QA (Docker dev)
+- Owner: Gemini
+- Repo: Review-only
+- PR/commit reference: docs/qa-analysis/2026-04-25_atlasai_smoke_report.md
+- Verification notes:
+  - Tested as a real user on http://localhost:5174
+  - Covered: login → worklist → case detail → member profile → HIPAA verify → return to case → email unlock behavior
+  - Logged console/network issues (see report) with severity + repro steps + suggested next developer prompt.
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Review Gemini’s first QA report and convert valid items into official queue tasks
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue updates only (no code change)
+- Verification notes:
+  - Reviewed docs/qa-analysis/2026-04-25_atlasai_smoke_report.md
+  - Converted valid findings into small actionable tasks (kept additions minimal)
+  - Updated queues and recorded any blockers (if any) in BLOCKED.md
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Align Case Detail route to the intended "real" page (not a stub)
+- Owner: Claude
+- Repo: atlasai-frontend
+- PR/commit reference: uncommitted working-tree changes (needs commit/PR)
+- Verification notes:
+  - Confirmed /cases/:id routes to the full AtlasCaseDetailPage implementation
+  - Ensured Worklist navigation lands on /cases/:id consistently
+  - Added breadcrumb parent support so Case Detail can show: Home › Worklist › Case Detail
+  - Files changed:
+    - src/components/common/PageBreadCrumb.tsx
+    - src/pages/Cases/AtlasCaseDetailPage.tsx
+
+- Date: 2026-04-25
+- Completed task title: ✅ (Seed) Case Detail HIPAA verification modal: make it modern/minimalist
+- Owner: Claude
+- Repo: atlasai-frontend
+- PR/commit reference: uncommitted working-tree changes (needs commit/PR)
+- Verification notes:
+  - Kept HIPAA verification as a modal on Case Detail
+  - Simplified styling to a cleaner minimalist look (reduced heavy bordered callouts)
+  - Verified behavior: after HIPAA verification, Email unlocks for that member’s case(s)
+  - TypeScript passes on changed files
+
+- Date: 2026-04-25
+- Completed task title: MySQL Phase D — Add MySQL indexes + perf guardrails for Salesforce-scale data
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `7e3fe1f`
+- Verification notes:
+  - Added additive MySQL indexes for Salesforce-scale reads:
+    - `members(subscriber_member_id)`
+    - `cases(member_id)`
+    - `cases(created_at, id)`
+    - `case_timeline(case_id, timestamp, id)`
+    - `case_attachments(case_id, created_at, id)`
+  - Backfilled index creation into `scripts/init-mysql.ts` so existing local MySQL databases get the same indexes without manual table rebuilds
+  - Kept JSON mode unchanged and left the existing mysql startup guard in place because it already validates config and fails fast on unreachable MySQL
+  - Verified MySQL mode boot + realistic data reload:
+    - `docker compose up -d atlasai-mysql`
+    - `MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:timeline`
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:attachments`
+    - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+  - Verified case detail endpoint still returns `200` in mysql mode for:
+    - `500Hu00002Qox7zIAB`
+    - `500Hu00002RUXy5IAH`
+  - Before/after local timing for `GET /v1/cases/:id` in mysql mode stayed in the same low single-digit range on localhost:
+    - before indexes: `500Hu00002Qox7zIAB` -> `5ms`, `500Hu00002RUXy5IAH` -> `5ms`
+    - after indexes: `500Hu00002Qox7zIAB` -> `5ms`, `500Hu00002RUXy5IAH` -> `7ms`
+    - note: latency remained dominated by local warm-cache noise, so query-plan confirmation is the stronger signal here
+  - Verified query plans use the intended indexes:
+    - `case_timeline` detail fetch uses `idx_case_timeline_case_timestamp_id`
+    - `case_attachments` detail fetch uses `idx_case_attachments_case_created_id`
+    - `members` subscriber lookup uses `idx_members_subscriber_member_id`
+    - `users` email lookup continues to use the existing unique `email` index
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-25
+- Completed task title: MySQL Phase C4 — Import Salesforce attachment metadata into MySQL + enable download in mysql mode
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `c68147a`
+- Verification notes:
+  - Added MySQL attachment metadata storage in `case_attachments` and hydrated `CaseDetail.attachments` from MySQL in `REPO_DRIVER=mysql`
+  - Extended `npm run import:salesforce:attachments` to branch by `REPO_DRIVER`:
+    - `json` mode unchanged
+    - `mysql` mode writes Salesforce attachment/document metadata into MySQL and preserves `exportRelativePath` + `sourceTrace`
+  - Verified mysql attachment import is idempotent by running it twice with identical totals:
+    - imported `15` legacy attachments
+    - imported `1,277` modern linked documents
+    - stored `1,292` Salesforce attachment metadata rows
+    - touched `374` cases
+    - skipped `902` unresolved content-document links
+  - Verified mysql-mode API parity:
+    - `POST /v1/auth/login` -> `HTTP/1.1 200 OK`
+    - `GET /v1/cases/500Hu00002Qox7zIAB` -> `attachments.length = 5`
+    - `GET /v1/cases/500Hu00002Qox7zIAB/attachments/sf-content-link-06AHu000013ndHdMAI/download` -> `200`, `application/pdf`, `Content-Disposition` present, `213159` bytes
+    - `GET /v1/cases/500Hu00002Qox7zIAB/attachments/sf-attachment-00PHu00002lajW7MAI/download` -> `200`, `image/png`, `Content-Disposition` present, `61662` bytes
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-25
+- Completed task title: Process QUEUE_INBOX.md → convert first three unchecked inbox items into official queue tasks
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `d20fe3b`
+- Verification notes:
+  - Reviewed `docs/agent-queues/QUEUE_INBOX.md` and existing official queues for duplicate task titles
+  - Converted exactly 3 inbox items into official queue tasks:
+    - Claude: `Case Detail — fold HIPAA warning card into sticky identity strip`
+    - Codex: `MySQL Phase E1 — Pagination for list endpoints (cases + members)`
+    - Codex: `MySQL Phase E2 — Search for cases/members (minimal MVP, MySQL mode)`
+  - Marked the corresponding inbox items as `✅ moved`
+  - Left `MySQL Phase E3 — PHI masking policy + API enforcement (pre/post HIPAA)` unchecked for a later run because the max-3 task limit was reached
+  - Queue-only run: no feature implementation, no blocker added
+
+- Date: 2026-04-25
+- Completed task title: Queue hygiene — correct stale Claude Phase A merge checkbox
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: frontend merge commit `a0d31d0`
+- Verification notes:
+  - Corrected the stale unchecked box for `Merge Case Detail Phase A branch to main` in `docs/agent-queues/CLAUDE_FRONTEND_QUEUE.md`
+  - Added a completion note referencing frontend commit `a0d31d0`
+  - Queue/docs-only run; no frontend or backend code changes
+
+- Date: 2026-04-25
+- Completed task title: Strict triage Gemini QA failures into queues
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: queue/docs-only update
+- Verification notes:
+  - Scanned `docs/qa-analysis/*.md` newest-first and considered only reports that explicitly indicated a problem (`❌ FAIL`, `P0/P1/P2`, `404`, `console`, `network`, `Error`)
+  - Used later PASS reports to resolve earlier failures and filtered duplicates before touching queues
+  - No new official queue tasks were created because all actionable failures were already resolved, duplicated, or not actionable
+  - Marked the stale Gemini task `Smoke test Salesforce attachment downloads after backend endpoint lands` done based on:
+    - `docs/qa-analysis/2026-04-25_atlasai_attachments_download_retest.md`
+    - `docs/qa-analysis/2026-04-25_atlasai_mysql_attachment_download_smoke.md`
+  - Rejected the remaining inbox item `MySQL Phase E3 — PHI masking policy + API enforcement (pre/post HIPAA)` for this pass because it is not tied to an explicit failing QA artifact under strict triage rules
+  - Triage table:
+
+  | Report | Verdict | Severity | Owner | Status | Evidence |
+  | --- | --- | --- | --- | --- | --- |
+  | `2026-04-25_atlasai_attachments_download_smoke.md` | FAIL | P0 | backend | Resolved by `2026-04-25_atlasai_attachments_download_retest.md` and `2026-04-25_atlasai_mysql_attachment_download_smoke.md` | Browser requests for both attachment downloads returned `404 Not Found`. |
+  | `2026-04-25_salesforce_attachment_download_retest.md` | FAIL | P0 | backend | Duplicate of `2026-04-25_atlasai_attachments_download_smoke.md`; resolved by later PASS reports | UI showed `HTTP 404` for both the PDF and PNG download actions. |
+  | `2026-04-25_atlasai_smoke_report.md` | FAIL | P0 | frontend | Resolved by `2026-04-25_atlasai_retest_hipaa_case_detail_resolved.md` | `Authorize & Access` stayed disabled after caller type + 3 identifiers; no console/network failure accompanied it. |
+  | `2026-04-25_mysql_salesforce_mvp_import_validation.md` | ISSUE | P1 | backend | Not actionable | Report notes a debug observation of zero MySQL timeline rows, but no standalone reproducible QA failure or later regression report followed. |
+  | `2026-04-25_salesforce_timeline_and_attachments_validation.md` | ISSUE | P1 | frontend | Resolved by `2026-04-25_salesforce_attachments_render_retest.md` | Backend returned attachment counts for sample cases while the UI rendered zero visible items. |
+  | `2026-04-25_salesforce_export_validation.md` | ISSUE | P1 | config/environment | Resolved by `2026-04-25_salesforce_export_attachments_retest.md` plus later importer work | Report flagged non-UTF8 exports and attachment-linkage planning gaps in the pre-import dataset. |
+
+- Date: 2026-04-25
+- Completed task title: Process QUEUE_INBOX.md → triage SECURITY item for MySQL Phase E3
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `84e4ba1`
+- Verification notes:
+  - Reviewed the first unchecked inbox item: `SECURITY: PHI masking policy + API enforcement (MySQL mode, pre/post HIPAA)`
+  - Confirmed `MySQL Phase E3` does not already exist as an official backend queue task
+  - Marked the inbox item `⛔ blocked` instead of queuing implementation work because backend cannot currently determine HIPAA-verified state independently; the only known state is frontend `sessionStorage`
+  - Added a blocker with the smallest unblock step: define verification scope and masking boundary so Codex can queue one backend enforcement task afterward
+
+- Date: 2026-04-25
+- Completed task title: Convert MySQL Phase E3 SECURITY blocker into official backend queue task
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `e34f1d8`
+- Verification notes:
+  - Applied Rene’s policy decision:
+    - HIPAA verification is session-scoped and server-side
+    - backend source of truth stores verified member IDs in the session
+    - masked fields should return `null`
+  - Added official backend task `MySQL Phase E3 — PHI masking policy + API enforcement (pre/post HIPAA)` to `docs/agent-queues/CODEX_BACKEND_QUEUE.md`
+  - Updated the SECURITY inbox item from `⛔ blocked` to `✅ moved`
+  - Cleared the resolved blocker entries from `docs/agent-queues/BLOCKED.md` because the policy dependency is now decided
+  - Queue/docs-only run; no backend implementation was started
+
+- Date: 2026-04-26
+- Completed task title: MySQL Phase E3 — PHI masking policy + API enforcement (pre/post HIPAA)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `f35f321`
+- Verification notes:
+  - Added mysql-only session-backed HIPAA verification via `POST /v1/members/:id/hipaa/verify`
+  - Stored verified member IDs and case IDs in the existing `express-session` session and persisted them with `req.session.save(...)`
+  - Enforced pre-verify masking with stable response shapes:
+    - `GET /v1/members/:id` returns `null` for masked PHI fields: `birthdate`, `ssn`, `phoneNumber`, `email`, address fields, `planName`, `planId`, `cobDetails`
+    - `GET /v1/cases/:id` returns `null` for PHI-prone fields: `actionItem`, `claimNumber`, free-text case detail fields, timeline `text`, `subject`, `from`, `to`, `cc`, `bcc`
+    - Safe metadata remains visible, including case identifiers/status fields, member names/IDs, counts, and attachment metadata
+  - Verified pre-verify masked case response for `500Hu00002Qox7zIAB`:
+    - `actionItem = null`
+    - `claimNumber = null`
+    - nested `member.planName = null`
+    - timeline sample `text/subject/from/to/cc/bcc = null`
+  - Verified pre-verify masked member response for `210120001300`:
+    - `birthdate/ssn/phoneNumber/email/addressLine1/city/state/zipCode/planName/planId = null`
+  - Verified session-scoped unmasking after `POST /v1/members/210120001300/hipaa/verify` with `caseId = 500Hu00002Qox7zIAB`:
+    - same session returned unmasked `actionItem`, `planName`, `planId`, timeline email metadata, and member PHI fields
+  - Verified attachment content stays blocked until verification:
+    - pre-verify `GET /v1/cases/500Hu00002Qox7zIAB/attachments/sf-content-link-06AHu000013ndHdMAI/download` -> `HTTP 403`
+    - post-verify same download -> `HTTP 200`, `Content-Type: application/pdf`
+  - Verified bootstrap still works cleanly with repeated mysql init after removing duplicate index creation from `db/mysql/schema.sql`
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-26
+- Completed task title: MySQL Phase E1 — Pagination for list endpoints (cases + members)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `a82183b`
+- Verification notes:
+  - Added mysql-only cursor pagination for `GET /v1/cases` and `GET /v1/members`
+  - Response shape in mysql mode is now:
+    - `{ items: [...], pageInfo: { nextCursor, hasNext } }`
+  - JSON mode remains unchanged and still returns the original array shape
+  - Cases use deterministic cursor ordering: `created_at DESC, id DESC`
+  - Members use deterministic cursor ordering: `subscriber_member_id ASC, id ASC`
+  - Verified mysql bootstrap/import:
+    - `docker compose up -d atlasai-mysql`
+    - `MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+    - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+  - Verified cases pagination with `limit=50`:
+    - page 1: `count=50`, `firstId=500cx00000js2JEAAY`, `lastId=500cx00000jjm0dAAA`, `hasNext=true`
+    - page 2: `count=50`, `firstId=500cx00000jkgvDAAQ`, `lastId=500cx00000jbtDLAAY`, `hasNext=true`
+    - overlap between page 1 and page 2 IDs: `0`
+  - Verified members pagination with `limit=50`:
+    - page 1: `count=50`, `firstSubscriberMemberId=,`, `lastSubscriberMemberId=003Hu00003t2SXWIA2`, `hasNext=true`
+    - page 2: `count=50`, `firstSubscriberMemberId=003Hu00003t2SXwIAM`, `lastSubscriberMemberId=003Hu00004CQfZ4IAL`, `hasNext=true`
+    - overlap between page 1 and page 2 IDs: `0`
+  - Verified invalid cursor handling:
+    - `GET /v1/cases?limit=50&cursor=not-a-valid-cursor` -> `HTTP 400`, `{"error":{"code":"BAD_REQUEST","message":"Invalid cursor for cases pagination"}}`
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-26
+- Completed task title: MySQL Phase E4 — Add GET /v1/cases/stats (status count aggregates)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `4a9ddce`
+- Verification notes:
+  - Added auth-protected `GET /v1/cases/stats` and registered it before `GET /v1/cases/:id`
+  - JSON mode counts statuses by iterating the in-memory case dataset
+  - MySQL mode counts statuses with `SELECT status, COUNT(*) ... GROUP BY status`
+  - Verified mysql bootstrap/import:
+    - `docker compose up -d atlasai-mysql`
+    - `MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me npm run db:mysql:init`
+    - `REPO_DRIVER=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3308 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 npm run import:salesforce:mvp`
+    - `REPO_DRIVER=mysql MYSQL_HOST=atlasai-mysql MYSQL_PORT=3306 MYSQL_DATABASE=atlasai MYSQL_USER=atlasai MYSQL_PASSWORD=change_me MYSQL_CONNECTION_LIMIT=10 docker compose up -d atlasai-backend`
+  - Verified mysql-mode stats response:
+    - `GET /v1/cases/stats` -> `{"open":78,"waiting":5,"escalated":25,"closed":11458}`
+  - Verified json-mode stats response after switching the backend back to default driver:
+    - `docker compose up -d atlasai-backend`
+    - `GET /v1/cases/stats` -> `{"open":78,"waiting":5,"escalated":25,"closed":11458}`
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-26
+- Completed task title: Atlas Case Detail compose backend parity — calls/tasks routes + PATCH compatibility
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `eb1d595`
+- Verification notes:
+  - Added backend parity for current frontend compose hooks:
+    - `POST /v1/cases/:id/calls`
+    - `POST /v1/cases/:id/tasks`
+    - `PATCH /v1/cases/:id` with `{ status }`
+    - `PATCH /v1/cases/:id` with `{ agent }`
+  - Added backend `task` timeline type support in both JSON and mysql repos
+  - Preserved existing routes:
+    - `PATCH /v1/cases/:id/status`
+    - `PATCH /v1/cases/:id/assign`
+  - Added close-case compatibility alias so frontend `notes` maps to backend `resolutionDetails`
+  - Verified json mode against case `500Hu00002QF3EdIAL`:
+    - `POST /calls` -> `{"ok":true}`
+    - `POST /tasks` -> `{"ok":true}`
+    - `PATCH /v1/cases/:id` with `{"status":"Waiting"}` -> `{"ok":true}`
+    - `PATCH /v1/cases/:id` with `{"agent":"Compose Agent"}` -> `{"ok":true}`
+    - Follow-up `GET /v1/cases/500Hu00002QF3EdIAL` showed:
+      - `status = "Waiting"`
+      - `agent = "Compose Agent"`
+      - new trailing timeline entries of types `call`, `status`, and `task`
+  - Verified mysql mode against the same case after session HIPAA verification for member `210110083700`:
+    - `POST /calls` -> `{"ok":true}`
+    - `POST /tasks` -> `{"ok":true}`
+    - `PATCH /v1/cases/:id` with `{"status":"Waiting"}` -> `{"ok":true}`
+    - `PATCH /v1/cases/:id` with `{"agent":"Compose Agent"}` -> `{"ok":true}`
+    - Follow-up `GET /v1/cases/500Hu00002QF3EdIAL` showed:
+      - `status = "Waiting"`
+      - `agent = "Compose Agent"`
+      - new trailing timeline entries of types `call`, `status`, and `task`
+  - Added future queue follow-ups from the handoff:
+    - reply-thread linkage (`inReplyToId`) for case emails
+    - structured call/task metadata instead of text prefixes
+  - Verified additive safety with `npx tsc --noEmit`
+
+- Date: 2026-04-27
+- Completed task title: Admin users list API parity — add protected `GET /v1/users`
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: commit `1cf07e0`
+- Verification notes:
+  - Added backend users list support for:
+    - `GET /v1/users`
+    - `GET /v1/users?role=agent`
+  - Mounted `/v1/users` in `src/app.ts`
+  - Added `users.service`, `users.controller`, and `users.routes`
+  - Added repo list support in both JSON and mysql user repos
+  - Confirmed responses exclude passwords
+  - Kept scope to read-only list parity; no user CRUD was added in this task
+
+- Date: 2026-04-30
+- Completed task title: MySQL Phase E2 — Search for cases/members (minimal MVP, MySQL mode)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: `c6a3863` — `Add mysql search for cases and members`
+- Verification notes:
+  - Added mysql-only search query parsing for:
+    - cases: `caseNumber`, `caseId`, `memberId`, `groupNumber`, `claimNumber`, `q`
+    - members: `subscriberMemberId`, `memberId`, `q`
+  - Preserved mysql pagination response shape:
+    - `{ items, pageInfo }`
+  - Preserved JSON mode behavior and response shape unchanged.
+  - Added mysql indexes for exact-match case search:
+    - `idx_cases_group_number`
+    - `idx_cases_claim_number`
+  - Verified `npx tsc --noEmit`
+  - Verified MySQL init/import:
+    - `npm run db:mysql:init`
+    - `npm run import:salesforce:mvp`
+  - Verified mysql-mode search results:
+    - `GET /v1/cases?caseNumber=00001096&limit=50` -> case `500Hu00002Qox7zIAB`
+    - `GET /v1/members?subscriberMemberId=210120001300&limit=50` -> member `210120001300` / `Megan ASH`
+    - `GET /v1/members?q=an&limit=5` -> bounded page with `hasNext=true`
+    - `GET /v1/members?q=an&limit=5&cursor=<page1.nextCursor>` -> page 2 with overlap `0`
+  - Verified invalid short member search:
+    - `GET /v1/members?q=a` -> `400 BAD_REQUEST`
+- Date: 2026-04-30
+- Completed task title: Timeline compose follow-up — add reply-thread linkage (`inReplyToId`) for case emails
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: `15f4847` — `Add case email reply-thread linkage`
+- Verification notes:
+  - Added optional `inReplyToId` on outbound case email creation.
+  - Persisted `inReplyToId` on `email-out` timeline entries and returned it from case detail reads.
+  - Verified valid reply-thread linkage on case `500Hu00002SXHJtIAP`:
+    - `POST /v1/cases/500Hu00002SXHJtIAP/emails` with `inReplyToId=sf-email-02sHu00001tjNH8IAM` -> `200 OK`
+    - Follow-up `GET /v1/cases/500Hu00002SXHJtIAP` included an `email-out` entry with:
+      - `inReplyToId: sf-email-02sHu00001tjNH8IAM`
+  - Verified invalid reply target handling:
+    - `POST /v1/cases/500Hu00002SXHJtIAP/emails` with unknown `inReplyToId` -> `400 BAD_REQUEST`
+  - Verified backward compatibility:
+    - `POST /v1/cases/500Hu00002SXHJtIAP/emails` without `inReplyToId` -> `200 OK`
+    - Resulting `email-out` entry had no `inReplyToId`
+  - Verified `npx tsc --noEmit`
+- Date: 2026-04-30
+- Completed task title: Timeline compose follow-up — structured call/task metadata instead of text prefixes
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: `13f9039` — `Add structured call and task metadata`
+- Verification notes:
+  - Added structured timeline fields:
+    - `callDirection`
+    - `callDurationSeconds`
+    - `taskDueDate`
+  - Added optional call route inputs:
+    - `direction`
+    - `durationSeconds`
+  - Verified structured call/task persistence on case `500Hu00002QF3EdIAL`:
+    - `POST /v1/cases/500Hu00002QF3EdIAL/calls` with `direction=Inbound`, `durationSeconds=330` -> `200 OK`
+    - `POST /v1/cases/500Hu00002QF3EdIAL/tasks` with `dueDate=2026-05-02` -> `200 OK`
+    - Follow-up `GET /v1/cases/500Hu00002QF3EdIAL` returned:
+      - `callDirection: Inbound`
+      - `callDurationSeconds: 330`
+      - `taskDueDate: 2026-05-02`
+  - Verified legacy backward compatibility:
+    - `POST /v1/cases/500Hu00002QF3EdIAL/calls` without structured metadata -> `200 OK`
+    - Follow-up call entry had no `callDirection` or `callDurationSeconds`
+  - Verified `npx tsc --noEmit`
+- Date: 2026-04-30
+- Completed task title: Standardize cases/members list envelope across drivers
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: `88b7645` — `Standardize list envelopes across drivers`
+- Verification notes:
+  - Standardized `GET /v1/cases` and `GET /v1/members` to always return:
+    - `{ items, pageInfo }`
+  - JSON mode now uses the same cursor envelope as mysql mode.
+  - Deterministic ordering now matches across drivers where feasible:
+    - cases: `createdAt DESC`, `id DESC`
+    - members: `subscriberMemberId ASC`, `id ASC`
+  - Verified JSON mode:
+    - `GET /v1/cases?limit=50` returned `items.length=50`, `hasNext=true`
+    - page 2 via `nextCursor` had overlap `0`
+    - `GET /v1/members?limit=50` returned `items.length=50`, `hasNext=true`
+  - Verified mysql mode:
+    - `GET /v1/cases?limit=50` returned `items.length=50`, `hasNext=true`
+    - page 2 via `nextCursor` had overlap `0`
+    - `GET /v1/members?limit=50` returned `items.length=50`, `hasNext=true`
+  - Backward-compat note:
+    - JSON list endpoints no longer return raw arrays; they now return the shared paginated envelope for consistency across drivers.
+  - Verified `npx tsc --noEmit`
+- Date: 2026-04-27
+- Completed task title: Triage TimelineCompose parity QA regression into official queues
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: to be recorded after commit
+- Verification notes:
+  - Reviewed `docs/qa-analysis/2026-04-26_timeline_compose_parity_retest.md`
+  - Confirmed the report is frontend-owned:
+    - backend parity routes passed
+    - P0 regression is duplicated `Content-Type` in frontend `authenticatedFetch`
+  - Added top-priority frontend fix task:
+    - `Fix compose mutation regression in authenticatedFetch header merging`
+  - Added matching QA retest task:
+    - `Retest TimelineCompose mutations after authenticatedFetch header fix`
+  - No backend task was added because the report explicitly verified backend route parity.
+
+- Date: 2026-04-30
+- Completed task title: Postgres Phase A — Add optional Postgres docker service + postgres-mode bootstrap (keep JSON default)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: pending (after commit)
+- Verification notes:
+  - Added `atlasai-postgres` to `/Users/rene/ai-dev-workspace/atlasai/docker-compose.yml`:
+    - host port `5433`
+    - named volume `atlasai_postgres_data`
+    - `pg_isready` healthcheck
+  - Added `REPO_DRIVER=postgres` behind the existing repo interfaces for:
+    - users
+    - members
+    - cases
+    - RBAC permissions
+  - Added `npm run db:pg:init` to create schema and seed Postgres from the current AtlasAI JSON database.
+  - Seed bootstrap deduped members by `id` using the richer source row and loaded:
+    - `53` users
+    - `8205` members from `8275` source rows
+    - `11566` cases
+    - `31201` timeline entries
+    - `1292` attachments
+    - `4` RBAC permission rows
+  - Verified Postgres-mode backend startup:
+    - `REPO_DRIVER=postgres` backend started successfully after refreshing the backend container dependencies with `pg`
+    - startup log reported `Persistence driver: postgres (atlasai-postgres:5432/atlasai)`
+  - Verified live API behavior in Postgres mode:
+    - `POST /v1/auth/login` -> `200 OK`
+    - `GET /v1/cases?limit=50` -> paginated `{ items, pageInfo }` envelope with `items.length=50`
+    - `GET /v1/cases/500Hu00002Qox7zIAB` -> `200 OK`
+    - page 2 via `nextCursor` had overlap `0`
+  - Backward-compat note:
+    - JSON remains the default driver when `REPO_DRIVER` is unset.
+- Date: 2026-05-01
+- Completed task title: Postgres Phase B — Import Salesforce MVP data into Postgres (cases + members + users)
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: pending (after commit)
+- Verification notes:
+  - Extended `npm run import:salesforce:mvp` to support `REPO_DRIVER=postgres`.
+  - Reused the existing Salesforce MVP mapping and duplicate-member dedupe policy.
+  - Verified Postgres init/reset:
+    - `PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=atlasai PGUSER=atlasai PGPASSWORD=change_me npm run db:pg:init`
+    - Seeded `53` users, `8205` members from `8275` source rows, `11566` cases.
+  - Verified Postgres importer output:
+    - imported: `cases=11566`, `members=8275`, `users=50`
+    - stored: `cases=11566`, `members=8205`, `users=53`
+    - skipped: `timeline=true`, `attachments=true`
+  - Verified Postgres-mode API after import:
+    - `POST /v1/auth/login` -> `200 OK`
+    - `GET /v1/cases?limit=50` -> paginated envelope, `items.length=50`, `hasNext=true`
+    - `GET /v1/members?limit=50` -> paginated envelope, `items.length=50`, `hasNext=true`
+    - `GET /v1/cases/500Hu00002Qox7zIAB` -> `200 OK`
+  - Verified JSON fallback still works when `REPO_DRIVER` is unset:
+    - restarted backend with default compose env
+    - container reported `REPO_DRIVER=json`
+    - login still returned `200 OK`
+- Date: 2026-04-30
+- Completed task title: Queue inbox triage run
+- Owner: Codex
+- Repo: atlasai-backend
+- PR/commit reference if applicable: pending (after commit)
+- Verification notes:
+  - Processed QUEUE_INBOX.md interactively
+  - Moves created: 1 (max allowed per run: 3)
+  - Backups were created for each modified file
