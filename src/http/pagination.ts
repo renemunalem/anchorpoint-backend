@@ -1,7 +1,9 @@
-import { BadRequestError, CaseListQuery, CursorPaginationRequest, MemberListQuery } from "../types/http";
+import { BadRequestError, CaseListQuery, CursorPaginationRequest, MemberListQuery, MemberSortField, SortDir } from "../types/http";
 import { CaseStatus } from "../types/models";
 
 const VALID_CASE_STATUSES = new Set<string>(["Open", "Waiting", "Escalated", "Closed"]);
+const VALID_MEMBER_SORT_FIELDS = new Set<string>(["openCaseCount", "lastUpdatedAt"]);
+const VALID_SORT_DIRS = new Set<string>(["asc", "desc"]);
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -84,11 +86,27 @@ export function parseMemberListQuery(query: Record<string, unknown>): MemberList
     throw new BadRequestError("q must be at least 2 characters for member search");
   }
 
+  const rawSortBy = getTrimmedQueryValue(query, "sortBy");
+  const rawSortDir = getTrimmedQueryValue(query, "sortDir");
+
+  if (rawSortBy !== undefined && !VALID_MEMBER_SORT_FIELDS.has(rawSortBy)) {
+    throw new BadRequestError(`sortBy must be one of: ${[...VALID_MEMBER_SORT_FIELDS].join(", ")}`);
+  }
+
+  if (rawSortDir !== undefined && !VALID_SORT_DIRS.has(rawSortDir)) {
+    throw new BadRequestError("sortDir must be one of: asc, desc");
+  }
+
+  const sortBy = rawSortBy as MemberSortField | undefined;
+  const sortDir = (rawSortDir as SortDir | undefined) ?? (sortBy ? "desc" : undefined);
+
   return {
     ...pagination,
     subscriberMemberId: getTrimmedQueryValue(query, "subscriberMemberId"),
     memberId: getTrimmedQueryValue(query, "memberId"),
     q,
     hasOpenCases: query["hasOpenCases"] === "true" ? true : undefined,
+    sortBy,
+    sortDir,
   };
 }

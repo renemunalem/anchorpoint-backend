@@ -7,6 +7,8 @@ import {
   IntakeCandidateRole,
   IntakeSearchQuery,
   MemberListQuery,
+  MemberSortField,
+  SortDir,
 } from "../../types/http";
 import { Member } from "../../types/models";
 import { MemberRepo } from "../MemberRepo";
@@ -166,6 +168,73 @@ function decodeMemberCursor(cursor: string): MemberCursorPayload {
   }
 }
 
+type SortedMemberCursorPayload = {
+  kind: "sorted";
+  field: MemberSortField;
+  dir: SortDir;
+  value: number | string | null;
+  id: string;
+};
+
+function encodeSortedMemberCursor(cursor: SortedMemberCursorPayload): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeSortedMemberCursor(cursor: string): SortedMemberCursorPayload {
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Partial<SortedMemberCursorPayload>;
+
+    if (
+      decoded.kind !== "sorted"
+      || (decoded.field !== "openCaseCount" && decoded.field !== "lastUpdatedAt")
+      || (decoded.dir !== "asc" && decoded.dir !== "desc")
+      || typeof decoded.id !== "string"
+    ) {
+      throw new Error("invalid");
+    }
+
+    return decoded as SortedMemberCursorPayload;
+  } catch {
+    throw new BadRequestError("Invalid cursor for members pagination");
+  }
+}
+
+function buildSortedCursorClause(
+  cursor: SortedMemberCursorPayload,
+  values: Array<string | number>,
+): string {
+  const { field, dir, value, id } = cursor;
+
+  if (field === "openCaseCount") {
+    const numVal = (value as number | null) ?? 0;
+    const p1 = `$${values.push(numVal)}`;
+    const p2 = `$${values.push(numVal)}`;
+    const pid = `$${values.push(id)}`;
+    const col = `m."openCaseCount"`;
+    return dir === "desc"
+      ? `(${col} < ${p1} OR (${col} = ${p2} AND m.id > ${pid}))`
+      : `(${col} > ${p1} OR (${col} = ${p2} AND m.id > ${pid}))`;
+  }
+
+  // lastUpdatedAt — always NULLS LAST
+  const col = `m."lastUpdatedAt"`;
+  const strVal = value as string | null;
+
+  if (strVal === null) {
+    const pid = `$${values.push(id)}`;
+    return `(${col} IS NULL AND m.id > ${pid})`;
+  }
+
+  const p1 = `$${values.push(strVal)}`;
+  const p2 = `$${values.push(strVal)}`;
+  const pid = `$${values.push(id)}`;
+  return dir === "desc"
+    ? `(${col} < ${p1} OR ${col} IS NULL OR (${col} = ${p2} AND m.id > ${pid}))`
+    : `(${col} > ${p1} OR ${col} IS NULL OR (${col} = ${p2} AND m.id > ${pid}))`;
+}
+
 function mapMemberRow(row: MemberRow): Member {
   const cobCoverageTypes = row.cobCoverageTypes
     ? typeof row.cobCoverageTypes === "string"
@@ -304,6 +373,10 @@ export class PostgresMemberRepo implements MemberRepo {
   }
 
   async listPage(params: MemberListQuery): Promise<CursorPageResult<Member>> {
+    if (params.sortBy) {
+      return this._listPageSorted(params as MemberListQuery & { sortBy: MemberSortField });
+    }
+
     const pool = getPostgresPool();
     const { whereClauses, values } = buildMemberSearchClauses(params);
 
@@ -339,6 +412,80 @@ export class PostgresMemberRepo implements MemberRepo {
         nextCursor: hasNext && lastRow
           ? encodeMemberCursor({
               subscriberMemberId: lastRow.subscriberMemberId,
+              id: lastRow.id,
+            })
+          : null,
+      },
+    };
+  }
+
+  private async _listPageSorted(
+    params: MemberListQuery & { sortBy: MemberSortField },
+  ): Promise<CursorPageResult<Member>> {
+    const pool = getPostgresPool();
+    const sortDir = params.sortDir ?? "desc";
+    const values: Array<string | number> = [];
+    const whereClauses: string[] = [];
+
+    if (params.subscriberMemberId) {
+      whereClauses.push(`m."subscriberMemberId" = $${values.push(params.subscriberMemberId)}`);
+    }
+    if (params.memberId) {
+      whereClauses.push(`m.id = $${values.push(params.memberId)}`);
+    }
+    if (params.q) {
+      const escaped = escapeLikePattern(params.q);
+      const p1 = `$${values.push(`${escaped}%`)}`;
+      const p2 = `$${values.push(`${escaped}%`)}`;
+      const p3 = `$${values.push(`%${escaped}%`)}`;
+      whereClauses.push(
+        `(m."firstName" ILIKE ${p1} ESCAPE '\\' OR m."lastName" ILIKE ${p2} ESCAPE '\\' OR CONCAT_WS(' ', m."firstName", m."lastName") ILIKE ${p3} ESCAPE '\\')`,
+      );
+    }
+    if (params.hasOpenCases) {
+      whereClauses.push(`m."openCaseCount" > 0`);
+    }
+    if (params.cursor) {
+      const cursor = decodeSortedMemberCursor(params.cursor);
+      whereClauses.push(buildSortedCursorClause(cursor, values));
+    }
+
+    const orderDir = sortDir.toUpperCase();
+    const orderExpr = params.sortBy === "openCaseCount"
+      ? `m."openCaseCount" ${orderDir}, m.id ASC`
+      : `m."lastUpdatedAt" ${orderDir} NULLS LAST, m.id ASC`;
+
+    const limitParam = `$${values.push(params.limit + 1)}`;
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    const { rows } = await pool.query<MemberRow>(
+      `
+        SELECT * FROM (
+          ${MEMBER_SELECT}
+        ) AS m
+        ${whereClause}
+        ORDER BY ${orderExpr}
+        LIMIT ${limitParam}
+      `,
+      values,
+    );
+
+    const hasNext = rows.length > params.limit;
+    const pageRows = hasNext ? rows.slice(0, params.limit) : rows;
+    const lastRow = pageRows.at(-1);
+
+    return {
+      items: pageRows.map(mapMemberRow),
+      pageInfo: {
+        hasNext,
+        nextCursor: hasNext && lastRow
+          ? encodeSortedMemberCursor({
+              kind: "sorted",
+              field: params.sortBy,
+              dir: sortDir,
+              value: params.sortBy === "openCaseCount"
+                ? (lastRow.openCaseCount ?? null)
+                : (lastRow.lastUpdatedAt ?? null),
               id: lastRow.id,
             })
           : null,

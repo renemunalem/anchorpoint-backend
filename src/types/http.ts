@@ -32,11 +32,16 @@ export interface CaseListQuery extends CursorPaginationRequest {
   statuses?: CaseStatus[];
 }
 
+export type MemberSortField = "openCaseCount" | "lastUpdatedAt";
+export type SortDir = "asc" | "desc";
+
 export interface MemberListQuery extends CursorPaginationRequest {
   subscriberMemberId?: string;
   memberId?: string;
   q?: string;
   hasOpenCases?: boolean;
+  sortBy?: MemberSortField;
+  sortDir?: SortDir;
 }
 
 export type IntakeSearchType =
