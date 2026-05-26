@@ -145,3 +145,75 @@ CREATE INDEX IF NOT EXISTS idx_case_attachments_case_created_id
 
 CREATE INDEX IF NOT EXISTS idx_call_sessions_agent_started
   ON call_sessions (agent_id, started_at);
+
+-- ---------------------------------------------------------------------------
+-- HIPAA Verification Display Policy tables (BE-075)
+-- Authored: 2026-05-26 | Applied: N/A — must not apply without explicit authorization.
+--
+-- SECURITY non-negotiables encoded here:
+--   1. default_mode defaults to 'strict' — safe for any new tenant row.
+--   2. policy_change_history is append-only (no UPDATE/DELETE in application code).
+--   3. reason/comment on every history row is NOT NULL — enforced at the DB layer.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS tenant_verification_policies (
+  id                     VARCHAR(64)   PRIMARY KEY,
+  tenant_id              VARCHAR(64)   NOT NULL UNIQUE,
+  -- 'strict' | 'standard' | 'hybrid'. Defaults to 'strict' — any unknown tenant is Strict.
+  default_mode           VARCHAR(32)   NOT NULL DEFAULT 'strict',
+  -- JSON object: { fieldName: 'visible' | 'partial' | 'hidden' }.
+  -- Fields omitted from this map default to 'hidden' (safest).
+  field_visibility       JSONB         NOT NULL DEFAULT '{}'::jsonb,
+  created_at             TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  last_changed_by_actor  VARCHAR(64)   NOT NULL,
+  last_changed_by_role   VARCHAR(64)   NOT NULL,
+  -- Non-empty reason required; enforced at application layer (validatePolicyChangeReason).
+  last_change_reason     TEXT          NOT NULL,
+
+  CONSTRAINT chk_tvp_mode CHECK (default_mode IN ('strict', 'standard', 'hybrid'))
+);
+
+-- Per-role mode overrides (least-privilege: role can only be pinned to same or stricter mode).
+CREATE TABLE IF NOT EXISTS tenant_role_verification_overrides (
+  id           VARCHAR(64)   PRIMARY KEY,
+  tenant_id    VARCHAR(64)   NOT NULL REFERENCES tenant_verification_policies(tenant_id),
+  role         VARCHAR(64)   NOT NULL,
+  pinned_mode  VARCHAR(32)   NOT NULL,
+  created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  set_by_actor VARCHAR(64)   NOT NULL,
+  set_by_role  VARCHAR(64)   NOT NULL,
+  reason       TEXT          NOT NULL,
+
+  UNIQUE (tenant_id, role),
+  CONSTRAINT chk_trvo_mode CHECK (pinned_mode IN ('strict', 'standard', 'hybrid'))
+);
+
+-- Append-only change history. Rows are NEVER updated or deleted.
+-- Every policy mutation (mode change, field visibility change, role override) inserts one row.
+CREATE TABLE IF NOT EXISTS tenant_policy_change_history (
+  id                   VARCHAR(64)   PRIMARY KEY,
+  tenant_id            VARCHAR(64)   NOT NULL,
+  changed_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  actor_id             VARCHAR(64)   NOT NULL,
+  actor_role           VARCHAR(64)   NOT NULL,
+  -- 'tenant-policy' or 'role-override'.
+  target_type          VARCHAR(32)   NOT NULL,
+  -- tenantId for tenant-policy; "tenantId:role" for role-override.
+  target_identifier    VARCHAR(128)  NOT NULL,
+  old_mode             VARCHAR(32)   NULL,
+  new_mode             VARCHAR(32)   NOT NULL,
+  old_field_visibility JSONB         NULL,
+  new_field_visibility JSONB         NOT NULL DEFAULT '{}'::jsonb,
+  -- Required non-empty reason — NOT NULL enforced here and at application layer.
+  reason               TEXT          NOT NULL,
+  comment              TEXT          NULL,
+
+  CONSTRAINT chk_tpch_new_mode CHECK (new_mode IN ('strict', 'standard', 'hybrid'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tvp_tenant_id
+  ON tenant_verification_policies (tenant_id);
+
+CREATE INDEX IF NOT EXISTS idx_tpch_tenant_changed
+  ON tenant_policy_change_history (tenant_id, changed_at DESC);

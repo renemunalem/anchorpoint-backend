@@ -125,3 +125,62 @@ CREATE TABLE IF NOT EXISTS call_sessions (
   verified_member_ids JSON NOT NULL,
   INDEX idx_call_sessions_agent_started (agent_id, started_at)
 );
+
+-- ---------------------------------------------------------------------------
+-- HIPAA Verification Display Policy tables (BE-075)
+-- Authored: 2026-05-26 | Applied: N/A — must not apply without explicit authorization.
+--
+-- SECURITY non-negotiables:
+--   1. default_mode defaults to 'strict' — safe for any new tenant row.
+--   2. tenant_policy_change_history is append-only.
+--   3. reason column is NOT NULL — enforced at the DB layer.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS tenant_verification_policies (
+  id                     VARCHAR(64)   NOT NULL,
+  tenant_id              VARCHAR(64)   NOT NULL,
+  default_mode           VARCHAR(32)   NOT NULL DEFAULT 'strict',
+  field_visibility       JSON          NOT NULL,
+  created_at             VARCHAR(64)   NOT NULL,
+  updated_at             VARCHAR(64)   NOT NULL,
+  last_changed_by_actor  VARCHAR(64)   NOT NULL,
+  last_changed_by_role   VARCHAR(64)   NOT NULL,
+  last_change_reason     TEXT          NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tvp_tenant (tenant_id),
+  CONSTRAINT chk_tvp_mode CHECK (default_mode IN ('strict', 'standard', 'hybrid'))
+);
+
+CREATE TABLE IF NOT EXISTS tenant_role_verification_overrides (
+  id           VARCHAR(64)   NOT NULL,
+  tenant_id    VARCHAR(64)   NOT NULL,
+  role         VARCHAR(64)   NOT NULL,
+  pinned_mode  VARCHAR(32)   NOT NULL,
+  created_at   VARCHAR(64)   NOT NULL,
+  set_by_actor VARCHAR(64)   NOT NULL,
+  set_by_role  VARCHAR(64)   NOT NULL,
+  reason       TEXT          NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_trvo_tenant_role (tenant_id, role),
+  CONSTRAINT chk_trvo_mode CHECK (pinned_mode IN ('strict', 'standard', 'hybrid')),
+  CONSTRAINT fk_trvo_tenant FOREIGN KEY (tenant_id) REFERENCES tenant_verification_policies(tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS tenant_policy_change_history (
+  id                   VARCHAR(64)   NOT NULL,
+  tenant_id            VARCHAR(64)   NOT NULL,
+  changed_at           VARCHAR(64)   NOT NULL,
+  actor_id             VARCHAR(64)   NOT NULL,
+  actor_role           VARCHAR(64)   NOT NULL,
+  target_type          VARCHAR(32)   NOT NULL,
+  target_identifier    VARCHAR(128)  NOT NULL,
+  old_mode             VARCHAR(32)   NULL,
+  new_mode             VARCHAR(32)   NOT NULL,
+  old_field_visibility JSON          NULL,
+  new_field_visibility JSON          NOT NULL,
+  reason               TEXT          NOT NULL,
+  comment              TEXT          NULL,
+  PRIMARY KEY (id),
+  CONSTRAINT chk_tpch_new_mode CHECK (new_mode IN ('strict', 'standard', 'hybrid')),
+  INDEX idx_tpch_tenant_changed (tenant_id, changed_at)
+);
