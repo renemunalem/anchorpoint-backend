@@ -47,9 +47,9 @@ async function main() {
   const { app } = await import("./app");
 
   app.listen(env.port, () => {
-    console.log(`AtlasAI backend listening on http://127.0.0.1:${env.port}`);
+    console.log(`Anchor Point backend listening on http://127.0.0.1:${env.port}`);
     console.log(`Allowed frontend origins: ${env.frontendOrigins.join(", ")}`);
-    console.log(`Dev database: ${getDbPath()}`);
+    console.log(`Local development database: ${getDbPath()}`);
     if (env.repoDriver === "mysql") {
       console.log(
         `Persistence driver: mysql (${env.mysql.host}:${env.mysql.port}/${env.mysql.database})`,
